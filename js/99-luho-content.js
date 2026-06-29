@@ -78,10 +78,11 @@
     MOB_DROPS[nm] = _LZ_DROPS.slice();
   });
 
-  // ── 5) 把地圖加進「地區」下拉選單（新增一個地區，放最後不影響預設出生地）──
-  MAP_REGIONS.push({
+  // ── 5) 把地圖加進「地區」下拉選單（放最上面，最好找）──
+  //    順序純為顯示用，不影響角色出生地（出生地由創角的村莊決定）。
+  MAP_REGIONS.unshift({
     key: 'levelzone',
-    label: '⭐等級地區',
+    label: '⭐等級地區(推廣幣)',
     maps: [ { v: 'level_zone', t: '等級地區(推廣幣)', c: '#fbbf24' } ]
   });
 
