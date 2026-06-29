@@ -87,10 +87,10 @@
   });
 
   // ── 6) 掛機打幣區的背景底圖（條狀地面圖，套 area-fit 貼齊地面）──
-  //    圖檔需放在 assets/area/掛機打幣區.jpg；沒放檔時版面正常、只是無底圖。
+  //    圖檔需放在 assets/area/掛機打幣區.png；沒放檔時版面正常、只是無底圖。
   if (typeof SPECIAL_AREA_BG !== 'undefined') {
-    SPECIAL_AREA_BG['level_zone'] = 'assets/area/掛機打幣區.jpg';
-    if (typeof AREA_BG_FIT !== 'undefined') AREA_BG_FIT.add('assets/area/掛機打幣區.jpg');
+    SPECIAL_AREA_BG['level_zone'] = 'assets/area/掛機打幣區.png';
+    if (typeof AREA_BG_FIT !== 'undefined') AREA_BG_FIT.add('assets/area/掛機打幣區.png');
   }
 
   console.log('[luho] 等級地區已注入：19 隻怪 + 地圖 + 掉落');
