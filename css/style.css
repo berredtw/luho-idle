@@ -1,5 +1,5 @@
         body { 
-    background-color: #374151; 
+    background-color: #14121f;
     background-image: url('../assets/background/background.png'); /* 👈 在這裡填入你的圖片檔名 */
     background-size: cover; 
     background-position: center; 
@@ -9,26 +9,26 @@
     overflow: hidden; 
     user-select: none; 
 }
-        body.game-bg-dim { background-image: linear-gradient(rgba(55,65,81,0.8), rgba(55,65,81,0.8)), url('../assets/background/background.png'); }  /* 正式開始遊戲後：背景淡化 */
-        .log-bg { border: 3px solid transparent; border-bottom-width: 1px; background: linear-gradient(180deg, #23282e 0%, #3e4651 50%, #1d2025 100%) padding-box, linear-gradient(135deg, #4a3613 0%, #b89243 20%, #6e5220 42%, #e6c474 60%, #5c4318 80%, #c9a14a 100%) border-box; }  /* 日誌訊息區：較深灰底 + 黃褐不規則漸層邊框 */
-        .panel { background: #1e293b padding-box, linear-gradient(135deg, #4a3613 0%, #b89243 20%, #6e5220 42%, #e6c474 60%, #5c4318 80%, #c9a14a 100%) border-box; border: 2px solid transparent; border-bottom-width: 1px; border-radius: 0.75rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; }
-        .panel-header { background: linear-gradient(135deg, #7e6630 0%, #a07f3c 18%, #6e5828 40%, #927535 58%, #5f4d22 78%, #876d31 100%); border-bottom: 1px solid #334155; padding: 0.75rem 1.25rem; font-size: 1.125rem; font-weight: bold; color: #e2e8f0; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000; border-top-left-radius: 0.75rem; border-top-right-radius: 0.75rem; }
-        #status-panel > .panel-header { background: transparent; color: #fbbf24; text-shadow: none; }  /* 人物左上資訊框標題：還原原本顏色 */
-        .tab-bar .btn { background: linear-gradient(135deg, #594720 0%, #786030 26%, #4a3c1a 48%, #6b5628 72%, #413518 100%); border-color: #6e5824; color: #f1f5f9; text-shadow: 0.5px 0.5px 0 #000, -0.5px -0.5px 0 #000, 0.5px -0.5px 0 #000, -0.5px 0.5px 0 #000; }  /* 分頁鈕：最暗金褐不規則漸層 */
-        .tab-bar .btn:hover:not(:disabled) { background: linear-gradient(135deg, #6e5828 0%, #927535 26%, #5f4d22 48%, #836a30 72%, #564621 100%); }
-        .tab-bar .btn.active { background: linear-gradient(135deg, #9a7c38 0%, #c19a4a 50%, #856a30 100%); border-color: #d4b35e; }
-        #btn-start { background: linear-gradient(135deg, #594720 0%, #786030 26%, #4a3c1a 48%, #6b5628 72%, #413518 100%); border-color: #6e5824; }  /* 開始冒險：金褐(同分頁鈕) */
-        #btn-start:hover:not(:disabled) { background: linear-gradient(135deg, #6e5828 0%, #927535 26%, #5f4d22 48%, #836a30 72%, #564621 100%); }
+        body.game-bg-dim { background-image: linear-gradient(rgba(18,14,34,0.84), rgba(12,9,26,0.88)), url('../assets/background/background.png'); }  /* 正式開始遊戲後：背景淡化（紫黑色調） */
+        .log-bg { border: 3px solid transparent; border-bottom-width: 1px; background: linear-gradient(180deg, #23282e 0%, #3e4651 50%, #1d2025 100%) padding-box, linear-gradient(135deg, #1e3a8a 0%, #4f46e5 20%, #6d28d9 42%, #06b6d4 60%, #4338ca 80%, #8b5cf6 100%) border-box; }  /* 日誌訊息區：較深灰底 + 黃褐不規則漸層邊框 */
+        .panel { background: #16142b padding-box, linear-gradient(135deg, #1e3a8a 0%, #4f46e5 20%, #6d28d9 42%, #06b6d4 60%, #4338ca 80%, #8b5cf6 100%) border-box; border: 2px solid transparent; border-bottom-width: 1px; border-radius: 0.75rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; }
+        .panel-header { background: linear-gradient(135deg, #312e81 0%, #4338ca 18%, #1e1b4b 40%, #5b21b6 58%, #312e81 78%, #4c1d95 100%); border-bottom: 1px solid #334155; padding: 0.75rem 1.25rem; font-size: 1.125rem; font-weight: bold; color: #e2e8f0; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000; border-top-left-radius: 0.75rem; border-top-right-radius: 0.75rem; }
+        #status-panel > .panel-header { background: transparent; color: #c4b5fd; text-shadow: none; }  /* 人物左上資訊框標題：紫色調 */
+        .tab-bar .btn { background: linear-gradient(135deg, #1e1b4b 0%, #312e81 26%, #1a1740 48%, #2a2470 72%, #16142e 100%); border-color: #6e5824; color: #f1f5f9; text-shadow: 0.5px 0.5px 0 #000, -0.5px -0.5px 0 #000, 0.5px -0.5px 0 #000, -0.5px 0.5px 0 #000; }  /* 分頁鈕：最暗金褐不規則漸層 */
+        .tab-bar .btn:hover:not(:disabled) { background: linear-gradient(135deg, #312e81 0%, #4338ca 26%, #272163 48%, #3b34a0 72%, #211c4d 100%); }
+        .tab-bar .btn.active { background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #4338ca 100%); border-color: #a78bfa; }
+        #btn-start { background: linear-gradient(135deg, #1e1b4b 0%, #312e81 26%, #1a1740 48%, #2a2470 72%, #16142e 100%); border-color: #6e5824; }  /* 開始冒險：金褐(同分頁鈕) */
+        #btn-start:hover:not(:disabled) { background: linear-gradient(135deg, #312e81 0%, #4338ca 26%, #272163 48%, #3b34a0 72%, #211c4d 100%); }
         #tab-stats .text-slate-400:not(.text-red-400):not(.text-blue-300):not(.text-blue-300) { color: #e2e8f0; }  /* 能力分頁：非顏色屬性的灰字改亮便於閱讀(屬抗/HP/MP恢復量等有色者不受影響) */
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #0f172a; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        ::-webkit-scrollbar-thumb { background: #6d28d9; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #8b5cf6; }
         /* 🔧 觸發爆擊：顯眼鮮紅＋微光，與敵方紅字區隔 */
         .crit-hit { color: #ff2e2e !important; font-weight: bold; text-shadow: 0 0 6px rgba(255,46,46,0.6), 0 0 2px rgba(255,120,120,0.8); }
-        .btn { background: #334155; border: 1px solid #475569; color: #f8fafc; padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer; transition: all 0.2s; font-weight: 500; }
-        .btn:hover:not(:disabled) { background: #475569; }
-        .btn.active { background: #2563eb; border-color: #3b82f6; color: #ffffff; }
+        .btn { background: #2a2548; border: 1px solid #4c4485; color: #f8fafc; padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer; transition: all 0.2s; font-weight: 500; }
+        .btn:hover:not(:disabled) { background: #3a3470; }
+        .btn.active { background: #7c3aed; border-color: #a78bfa; color: #ffffff; }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .list-item { padding: 0.75rem; border-bottom: 1px solid #334155; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 1rem; width: 100%;}
         .list-item:hover { background: #334155; }
@@ -148,7 +148,7 @@
         .bar-fill { height: 100%; transition: width 0.2s ease-out; }
         .bar-text { position: absolute; top: 0; left: 0; width: 100%; text-align: center; font-size: 12px; line-height: 20px; font-weight: 700; text-shadow: 1px 1px 2px rgba(0,0,0,0.9); }
         /* 🛡️ 裝備可用職業 logo：細金邊、無發光特效 */
-        .class-eq-icon { display: inline-block; width: 20px; height: 20px; object-fit: contain; vertical-align: middle; margin-right: 4px; border: 1px solid #c9a227; border-radius: 4px; background: #11161f; box-shadow: none; }
+        .class-eq-icon { display: inline-block; width: 20px; height: 20px; object-fit: contain; vertical-align: middle; margin-right: 4px; border: 1px solid #6d28d9; border-radius: 4px; background: #11111f; box-shadow: none; }
         .c-blessed { color: #facc15; } .c-ancient { color: #c084fc; } .c-rare { color: #fb923c; } .c-attr { color: #22d3ee; } .c-anc-bless { color: #e3a625; }
         .c-eternal    { color: #f43f5e; text-shadow: 0 0 5px rgba(244,63,94,.65); }   /* 永恆：玫瑰紅（與火屬性三紅區隔） */
         .c-immortal   { color: #10b981; text-shadow: 0 0 5px rgba(16,185,129,.65); }  /* 不朽：翡翠綠（與風屬性三綠區隔） */
