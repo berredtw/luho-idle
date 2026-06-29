@@ -12,11 +12,8 @@
     console.warn('[luho] 引擎全域未就緒，跳過自訂內容注入'); return;
   }
 
-  // ── 1) 兩個自訂代幣（參考遊戲沒有，新建；圖借用金幣圖，避免破圖）──
-  DB.items['cur_promo'] = { n: '推廣幣', type: 'etc', p: 0, noUse: true, c: 'text-yellow-300', img: 'assets/icons/items/金幣.png', d: '等級地區掉落的推廣代幣。' };
-  DB.items['cur_hunt']  = { n: '狩獵幣', type: 'etc', p: 0, noUse: true, c: 'text-amber-300',  img: 'assets/icons/items/金幣.png', d: '等級地區掉落的狩獵代幣。' };
-
-  // ── 2) 19 隻平民系怪（等級地區）──
+  // ── 1) 19 隻平民系怪（等級地區）──
+  //    （推廣幣／狩獵幣已依需求移除，不再掉落、也不建道具）
   //    欄位：[key, 名稱, 圖檔名(monsters/), 等級, 體型S/L, 魔防MR, 防禦AC, 攻速ms, 屬性]
   //    缺原圖者用相近現成圖替代（不糾結；先能玩、不破圖）。
   const _LZ = [
@@ -71,8 +68,6 @@
   //    機率＝DB chance ÷ 10000（百萬分母→百分比）；元寶已排除；金幣走 goldMin/Max；
   //    0.005% 的 5% 卷軸忽略（太低、且需另建道具）。
   var _LZ_DROPS = [
-    ['cur_promo', 30],      // 推廣幣 30%
-    ['cur_hunt', 30],       // 狩獵幣 30%
     ['scroll_armor', 0.8],  // 對盔甲施法的卷軸 0.8%
     ['scroll_weapon', 0.5]  // 對武器施法的卷軸 0.5%
   ];
