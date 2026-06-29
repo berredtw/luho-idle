@@ -82,9 +82,16 @@
   //    順序純為顯示用，不影響角色出生地（出生地由創角的村莊決定）。
   MAP_REGIONS.unshift({
     key: 'levelzone',
-    label: '⭐等級地區(推廣幣)',
-    maps: [ { v: 'level_zone', t: '等級地區(推廣幣)', c: '#fbbf24' } ]
+    label: '⭐掛機打幣區',
+    maps: [ { v: 'level_zone', t: '掛機打幣區', c: '#fbbf24' } ]
   });
+
+  // ── 6) 掛機打幣區的背景底圖（條狀地面圖，套 area-fit 貼齊地面）──
+  //    圖檔需放在 assets/area/掛機打幣區.jpg；沒放檔時版面正常、只是無底圖。
+  if (typeof SPECIAL_AREA_BG !== 'undefined') {
+    SPECIAL_AREA_BG['level_zone'] = 'assets/area/掛機打幣區.jpg';
+    if (typeof AREA_BG_FIT !== 'undefined') AREA_BG_FIT.add('assets/area/掛機打幣區.jpg');
+  }
 
   console.log('[luho] 等級地區已注入：19 隻怪 + 地圖 + 掉落');
 })();
