@@ -25,9 +25,10 @@ function _sfxLoadCfg() {
 }
 function _sfxSaveCfg() { try { if (typeof _lsSet === 'function') _lsSet('fb5_sfx', JSON.stringify(_sfxCfg)); } catch (e) {} }
 
-// 載入單一音效：依序試 mp3→ogg→wav；第一個能播者→建立 N 個元素的播放池；全部失敗→該事件保持靜音
+// 載入單一音效：本服 sfx 檔全為 .ogg → 先試 ogg（一次命中、不噴 mp3 404 雜訊），mp3/wav 僅備援；全失敗→該事件保持靜音
+// ⚠️ 日後照抄作者新引擎會被覆蓋回 'mp3' 優先 → 重抄後記得改回 'ogg' 優先（見 /idle-game skill §10）
 function _sfxTryLoad(key, def) {
-    var exts = ['mp3', 'ogg', 'wav'], i = 0;
+    var exts = ['ogg', 'mp3', 'wav'], i = 0;
     function tryNext() {
         if (i >= exts.length) { _sfxPool[key] = null; return; }
         var url = 'assets/sfx/' + def.file + '.' + exts[i++];
