@@ -1,3 +1,34 @@
+// ===== 🎯 DPS 統計（本圖效率統計用）=====
+// 以「HP-delta 歸因」量測各來源每秒輸出：在 tick 各攻擊階段前後快照在場怪 curHp，差值歸給該階段來源。
+// 來源：player（玩家·含自動施法/持續增益/中毒出血 DoT）、summon（玩家召喚/迷魅/幻術立方）、pet（項圈夥伴）、
+//       per-ally（每個傭兵獨立·key=存檔槽 _slot）。累積傷害÷觀測秒數＝DPS。換地圖/重置歸零（auditReset→_dpsReset），非存檔。
+let _dps = { player: 0, summon: 0, pet: 0, allies: {} };
+let _dpsAllyTurn = false;   // alliesTick 逐傭兵量測期間為 true：令 _allyDamageMob 不重複計入（回合內輸出已被該傭兵 HP-delta 涵蓋），僅「反擊/居合」等回合外輸出才由 _allyDamageMob 直接歸因
+function _dpsReset() { _dps = { player: 0, summon: 0, pet: 0, allies: {} }; }
+function _dpsSnap() {   // 快照在場（未死）怪物 curHp（依索引；tick 內怪物陣列不位移→索引穩定）
+    if (typeof mapState === 'undefined' || !mapState || !mapState.mobs) return null;
+    return mapState.mobs.map(m => (m && !m._dead) ? (m.curHp || 0) : null);
+}
+function _dpsDealt(snap) {   // 與快照比對：加總掉血量（補血/再生→負值忽略；新生怪 snap=null 忽略；溢殺以 0 計）
+    if (!snap || typeof mapState === 'undefined' || !mapState || !mapState.mobs) return 0;
+    let mobs = mapState.mobs, d = 0;
+    for (let i = 0; i < snap.length; i++) {
+        if (snap[i] == null) continue;
+        let m = mobs[i];
+        let after = (m && !m._dead) ? Math.max(0, m.curHp || 0) : 0;
+        let lost = snap[i] - after;
+        if (lost > 0) d += lost;
+    }
+    return d;
+}
+function _dpsAddAlly(ally, amt) {   // 累加某傭兵輸出（key=存檔槽·名稱隨時更新）
+    if (!(amt > 0) || !ally) return;
+    let k = ally._slot != null ? String(ally._slot) : (ally._allyName || 'ally');
+    if (!_dps.allies[k]) _dps.allies[k] = { name: ally._allyName || (typeof allyName === 'function' ? allyName(ally) : '傭兵'), dmg: 0 };
+    else if (ally._allyName) _dps.allies[k].name = ally._allyName;
+    _dps.allies[k].dmg += amt;
+}
+
 function gameLoop() {
     let now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     if(_loopLast == null) _loopLast = now;
@@ -94,6 +125,7 @@ function tick() {
     if(!state.running || player.dead) return;
     state.ticks++;
     _combatSrc = null;   // ⚔️ 戰鬥日誌來源：每 tick 起始重置（玩家攻擊/施法/DoT 等預設依顏色type推定；友方派發點會各自設定）
+    _dpsAllyTurn = false; let _dpsPlayerSnap = _dpsSnap();   // 🎯 DPS：玩家階段起點快照（至怪物行動前的所有掉血＝玩家輸出·含自動施法/持續增益）
     castleGuardTick();   // 🏰 城堡護衛：回血/力竭恢復/城堡擁有結束自動解散
     for(let k in player.manualCd) if(player.manualCd[k] > 0) player.manualCd[k]--;
     
@@ -113,6 +145,8 @@ function tick() {
     }
     if (state.ticks % 10 === 0) siegeTick();   // 攻城戰：每秒檢查時限
     if (state.ticks % 100 === 0) { try { refreshPandoraMarket(false); } catch (e) {} }   // 🔧 潘朵拉黑市：每 10 秒檢查是否到 10 分鐘換商品（含稀有公告）
+    if (state._junkSellAt == null) state._junkSellAt = state.ticks + JUNK_AUTOSELL_TICKS;   // 🗑️ 自動賣廢品倒數：預設 10 分鐘（JUNK_AUTOSELL_TICKS）
+    if (state.ticks >= state._junkSellAt) { try { if (typeof autoSellJunk === 'function' && (!player || player.autoSellOn !== false)) autoSellJunk(); } catch (e) {} state._junkSellAt = state.ticks + JUNK_AUTOSELL_TICKS; }   // 🗑️ 倒數到→若「自動賣出」開啟(player.autoSellOn!==false·預設開)則賣出標示為廢品的物品並重新排程 3 分鐘；停止賣出時只重排程不賣。玩家手動標示廢品會把此時間往後推 3 分鐘（_bumpJunkSellTimer）
     
     if(player.statuses.poison > 0 && state.ticks % player.statuses.poisonTick === 0 && !inAbsBarrier()) {
         let _pdmg = player.statuses.poisonDmg;
@@ -200,10 +234,10 @@ function tick() {
         if(!mapState.spawnAt) mapState.spawnAt = [null, null, null, null, null];
         let nowT = state.ticks;
         if(KING_ROOMS[mapState.current] && state._kbRespawnAt != null) {
-            // 🔧 軍王之室復活等待中：15 秒內不刷任何怪；時間到則消耗 1 把鑰匙、從頭重生軍王與兩側小怪（背景/離線補跑期間也照常復活）
+            // 🔧 軍王之室復活等待中：5 秒內不刷任何怪；時間到則消耗 1 把鑰匙、從頭重生軍王與兩側小怪（背景/離線補跑期間也照常復活）
             if(nowT >= state._kbRespawnAt) { state._kbRespawnAt = null; kbRoomRespawn(); }
         } else if(KING_ROOMS[mapState.current] && KING_ROOMS[mapState.current].dual) {
-            // 🏛️ 雙BOSS祭壇：不逐格自動補怪（初次生成於 changeMap；單隻陣亡不補）。防呆：兩隻皆亡卻未標記全滅 → 補標，交由 settleDeadMobs 啟動 15 秒同時復活
+            // 🏛️ 雙BOSS祭壇：不逐格自動補怪（初次生成於 changeMap；單隻陣亡不補）。防呆：兩隻皆亡卻未標記全滅 → 補標，交由 settleDeadMobs 啟動 5 秒同時復活
             if(state._kbVictory !== true && !mapState.mobs.some(m => m && m.boss)) state._kbVictory = true;
         } else {
             let slotCount = backSlotsActive() ? 5 : 3;                          // 🆕 一般狩獵地圖開放後排兩格(3,4)→最多 5 隻；特殊版面維持 3 格
@@ -212,14 +246,14 @@ function tick() {
                 if(isPureBossMap && i !== 1) continue;                          // 純 BOSS 房只生中央
                 let delay;
                 if(isPureBossMap) {
-                    delay = 1800;                                               // 🔧 純BOSS房：BOSS死亡後固定 3 分鐘(1800 tick=180秒)才刷新，不受日光術/席琳的世界加速影響
+                    delay = 50;                                                 // 🔧 純BOSS房(三龍窟)：BOSS死亡後固定 5 秒(50 tick)才刷新，不受日光術/席琳的世界加速影響（2026-06 用戶調整 3 分鐘→5 秒）
                 } else if(KING_ROOMS[mapState.current]) {
                     delay = 50;                                                 // 🔧 軍王之室：固定 5 秒復活，不受日光術/席琳的世界加速影響
                 } else {
                     delay = (player.buffs.sk_sunlight > 0) ? 10 : 50;          // 50 tick = 5 秒（日光術約 1 秒）
                     if (sherineWorldActive() && !isSiegeArea(mapState.current)) delay = Math.max(1, delay - 10);   // 🔮 席琳的世界：搜索時間 −1 秒（與日光術疊加）
                 }
-                if(mapState.spawnAt[i] == null) mapState.spawnAt[i] = nowT + delay; // 空格剛出現：排程 delay 後（一般 5 秒；純BOSS房 3 分鐘）
+                if(mapState.spawnAt[i] == null) mapState.spawnAt[i] = nowT + delay; // 空格剛出現：排程 delay 後（一般／純BOSS房／軍王之室皆 5 秒）
                 if(nowT >= mapState.spawnAt[i]) { spawnMob(i); mapState.spawnAt[i] = null; }
             }
         }
@@ -236,6 +270,7 @@ function tick() {
         }
     }
     
+    { let _pd = _dpsDealt(_dpsPlayerSnap); if (_pd > 0) _dps.player += _pd; }   // 🎯 DPS：結算玩家階段輸出（攻擊／自動施法／持續增益）；怪物中毒/出血 DoT 於 processMobStatusTick 另計入玩家
     for(let i=0; i<mapState.mobs.length; i++) {   // 🆕 含後排(3,4)：所有在場怪皆會行動攻擊
         let m = mapState.mobs[i];
         if(!m) continue;
@@ -296,7 +331,7 @@ function tick() {
 
         let slowAdd = (m.st && m.st.slow > 0) ? 10 : 0; // 緩速：攻擊間隔 +1 秒
         if(m._atkCd <= 0) {
-            enemyPhysicalAttack(m, i);
+            enemyAttackChooseVictim(m, i);   // 🤝 Phase 3：一般物理攻擊可能改打非倒地傭兵（加權隨機）；魔法/狀態仍只打玩家
             m._atkCd = Math.max(1, Math.floor(m.atkSpd * 10)) + slowAdd;
             m._bluntDelayed = false;   // 攻擊後重置鈍擊延遲標記，下一週期可再被延遲一次
         }
@@ -314,7 +349,7 @@ function tick() {
                  if(m._magCd[mk] <= 0) {
                      m._magCd[mk] = m[mk].cd;
                      if(Math.random() <= m[mk].chance) {
-                         if(!player.dead) applyMobMagic(m, m[mk]);
+                         if(!player.dead) castMobMagic(m, m[mk]);   // 🤝 Phase4：攻擊型魔法可依全體名單/仇恨權重打玩家或傭兵
                      }
                  }
             } else {
@@ -322,14 +357,14 @@ function tick() {
                  m._magCd[mk]--;
                  if(m._magCd[mk] <= 0) {
                      m._magCd[mk] = m[mk].cd;
-                     if(!player.dead) applyMobMagic(m, m[mk]);
+                     if(!player.dead) castMobMagic(m, m[mk]);   // 🤝 Phase4：攻擊型魔法可依全體名單/仇恨權重打玩家或傭兵
                  }
             }
         });
         if(player.dead) break;
     }
 
-    if(!player.dead) { _combatSrc = 'summon'; summonTick(player.summon, () => { player.summon = null; }); summonTick(player.charmed, () => { player.charmed = null; }); if(player.cls === 'illusion') { cubeTick(); illuSummonTick(); } _combatSrc = 'mercenary'; alliesTick(); _combatSrc = null; }   // ⚔️ 召喚(含迷魅)/傭兵 戰鬥訊息來源情境；🔮 幻術士立方週期效果＋幻術精通幻象
+    if(!player.dead) { _combatSrc = 'summon'; let _dpsSumSnap = _dpsSnap(); summonTick(player.summon, () => { player.summon = null; }); summonTick(player.charmed, () => { player.charmed = null; }); if(player.cls === 'illusion') { cubeTick(); illuSummonTick(); } { let _sd = _dpsDealt(_dpsSumSnap); if (_sd > 0) _dps.summon += _sd; }   /* 🎯 DPS：召喚（玩家召喚/迷魅/幻術立方）輸出 */ _combatSrc = 'mercenary'; alliesTick(); _combatSrc = null; }   // ⚔️ 召喚(含迷魅)/傭兵 戰鬥訊息來源情境；🔮 幻術士立方週期效果＋幻術精通幻象
     if(!player.dead) pledgeBlessTick();   // 生命的祝福：場上血盟怪物持續治療
     // 盟主祝福到期清理（每秒檢查；到期即移除並重算屬性）
     if(!player.dead && player.blessings && state.ticks % 10 === 0) {
@@ -372,6 +407,7 @@ function tick() {
         let pg = petGearBonus();   // 🦴 寵物裝備：夥伴額外傷害/命中（影響所有項圈夥伴）
         if (target && target.curHp > 0 && player.partners.length > 0) {
             _combatSrc = 'pet';   // ⚔️ 夥伴(項圈犬類)戰鬥訊息來源情境
+            let _dpsPetSnap = _dpsSnap();   // 🎯 DPS：夥伴階段起點快照
             player.partners.forEach(nm => {
                 let pd = PET_DEF[nm]; if(!pd) return;
                 let hits = petCollarCount(nm);
@@ -386,6 +422,7 @@ function tick() {
                     let r = roll(1, 20);
                     if (r === 20 || (r !== 1 && hv >= r) || (r === 19 && hasSummonCtrlRing())) {
                         let dmg = Math.max(1, roll(1, Math.max(1, player.lv + pd.diceOff)) + Math.floor(cha * ((pd.chaMult || 1) * (hasMastery('k_royal_pet') ? 1.2 : 1))) + pg.dmg - (target.dr || 0));   // 👑 夥伴精通：魅力傷害係數×1.2
+                        dmg = Math.max(1, Math.floor(dmg * royalAllyMult()));   // 👑 王族魅力加成：項圈夥伴造成傷害 ×(1+魅力/100)（非王族＝×1）
                         target.curHp -= dmg; target.justHit = pd.ele; mobWake(target);
                         logCombat(`夥伴 [${nm}] 撕咬 <span class="${getMobColor(target.lv)}">${target.n}</span>，造成 ${dmg} 點${pd.eleName}屬性傷害！`, 'player-special');
                     } else {
@@ -401,6 +438,7 @@ function tick() {
                             _pts.forEach(_pm => {
                                 let _pdmg = petProcSpellDamage(pd.proc, _pm);
                                 if (_pdmg > 0) {
+                                    _pdmg = Math.max(1, Math.floor(_pdmg * royalAllyMult()));   // 👑 王族魅力加成：夥伴 proc 法術傷害 ×(1+魅力/100)
                                     _pm.curHp -= _pdmg; _pm.justHit = _ps.ele || pd.ele; mobWake(_pm);
                                     _ptexts.push(`<span class="${getMobColor(_pm.lv)}">${_pm.n}</span> ${_pdmg}`);
                                 }
@@ -415,6 +453,7 @@ function tick() {
             if (target.curHp <= 0 && idx !== -1) killMob(idx);
             else renderMobs();
             renderTabs();   // 肉數量變動需刷新
+            { let _petd = _dpsDealt(_dpsPetSnap); if (_petd > 0) _dps.pet += _petd; }   // 🎯 DPS：結算夥伴階段輸出
             _combatSrc = null;   // ⚔️ 結束夥伴來源情境
         }
     }
@@ -464,7 +503,7 @@ const KING_ROOMS = {
     law_king_room:      { boss: 'de_king_laia',    minion: 'de_lab_mage',        name: '法令軍王之室' },
     necro_king_room:    { boss: 'de_king_heruby',  minion: 'de_necro_warlock',   name: '冥法軍王之室' },
     assassin_king_room: { boss: 'de_king_slayer',  minion: 'de_gate_soldier',    name: '暗殺軍王之室' },
-    // 🏛️ 底比斯歐西里斯祭壇：雙BOSS（賀洛斯＋阿努比斯），兩隻皆亡後 15 秒同時復活；入場與再臨各消耗 1 把祭壇鑰匙
+    // 🏛️ 底比斯歐西里斯祭壇：雙BOSS（賀洛斯＋阿努比斯），兩隻皆亡後 5 秒同時復活；入場與再臨各消耗 1 把祭壇鑰匙
     thebes_temple:      { dual: true, bosses: ['thebes_horus', 'thebes_anubis'], key: 'item_thebes_altar_key', name: '底比斯歐西里斯祭壇' }
 };
 const PURE_BOSS_MAPS = ['antaras_lair', 'fafurion_lair', 'valakas_lair', 'king_baranka_room', 'law_king_room', 'necro_king_room', 'assassin_king_room', 'thebes_temple'];
@@ -558,6 +597,7 @@ function spawnMob(idx) {
         else _id = (idx === 1) ? _kr.boss : _kr.minion;
         let _b = DB.mobs[_id]; if(!_b) return;
         mapState.mobs[idx] = { ..._b, curHp: _b.hp, uid: uid(), _magCd: {}, justHit: false, st: newMobStatus() };
+        applySherineBuff(idx);   // 🔮 軍王之室／底比斯歐西里斯祭壇也吃「席琳的世界」強化＋_sherine（與一般出怪一致；不含恩賜 grace；須在 initHardSkin 之前）
         if(mapState.mobs[idx].hard) initHardSkin(mapState.mobs[idx]);
         return;
     }
@@ -720,7 +760,7 @@ function stretchHitValue(raw) {
 }
 function getPhysicalDmg(diceStr, target, wpn, arrowData, forceHeavy, forceHit, forceLand, forceCrit, wpnInst) {
     let isRanged = !!(wpn && wpn.ranged);
-    let hitBonus = (isRanged ? player.d.rangedHit : player.d.meleeHit) + player.d.extraHit + (player._skillHitBonus || 0);   // 🗼 范德之劍：施展衝擊之暈時本次技能近距離命中+1（由 castSkill 設置/重置）
+    let hitBonus = (isRanged ? player.d.rangedHit : player.d.meleeHit) + player.d.extraHit + (player._skillHitBonus || 0) + (player._setBeauty5 ? (player._beautyMissStack || 0) : 0);   // 🗼 范德之劍：施展衝擊之暈時本次技能近距離命中+1；🔮 麗人5/5：未命中堆疊命中
     let dmgBonus = (isRanged ? player.d.rangedDmg : player.d.meleeDmg);
     let critRate = isRanged ? player.d.rangedCrit : player.d.meleeCrit;
     let critDmg  = isRanged ? player.d.rangedCritDmg : player.d.meleeCritDmg;
@@ -743,7 +783,8 @@ function getPhysicalDmg(diceStr, target, wpn, arrowData, forceHeavy, forceHit, f
     else if (player.buffs && player.buffs.sk_elf_preciseshot > 0 && rollHit === 1) hit = true;   // 🏹 精準射擊：擲骰1由必定未命中→必定命中（最高命中率可達100%）
     else if (rollHit !== 1 && hitValue >= rollHit) hit = true;
     else if (rollHit === 19) { hit = true; graze = true; }   // 一般武器：擲到19本應未命中時 → 擦傷（傷害剩50%）
-    if(!hit) return { dmg: 0, hit: false, heavy: false, crit: false, graze: false, crush: false, ranged: isRanged };
+    if(!hit) { if (player._setBeauty5) player._beautyMissStack = (player._beautyMissStack || 0) + 10; return { dmg: 0, hit: false, heavy: false, crit: false, graze: false, crush: false, ranged: isRanged }; }   // 🔮 麗人5/5：未命中→額外命中+10可堆疊
+    if (player._setBeauty5 && player._beautyMissStack) player._beautyMissStack = 0;   // 🔮 麗人5/5：物理命中→堆疊歸零
 
     // 爆擊判定（依遠/近距離爆擊率；🔧 迴避精通：forceCrit 必定爆擊）
     let isCrit = !!forceCrit || (Math.random() * 100 < critRate);
@@ -764,12 +805,11 @@ function getPhysicalDmg(diceStr, target, wpn, arrowData, forceHeavy, forceHit, f
     // 固定傷害（屬性/特效，於最低1之後加上）
     let fixed = 0;
 
-    // 0. 屬性詞綴：固定傷害 +1/+3/+5，並對剋屬性怪物額外 +6/+9/+12 固定傷害
+    // 0. 屬性詞綴：固定傷害 +1/+3/+5（剋制改用最終 ×1.4/×0.6 倍率，見下方 _outDmg）
     let _attrInst = (wpnInst && wpnInst.attr) ? wpnInst : player.eq.wpn;   // ⚔️ 指定揮擊武器（副手＝offwpn）自身有屬性詞綴則用其屬性，否則沿用主武器（純加成、不減損既有行為）
     let _wAff = getAttrAffix(_attrInst && _attrInst.attr);
     if (_wAff) {
         fixed += _wAff.fix;
-        if (isElementCounter(_wAff.ele, target.e)) fixed += _wAff.counter;
     }
     
     // 先判定武器/箭矢本身是否帶「對不死/狼人」加成 (unBonus)
@@ -793,8 +833,9 @@ function getPhysicalDmg(diceStr, target, wpn, arrowData, forceHeavy, forceHit, f
     if (graze) _outDmg = Math.max(1, Math.floor(_outDmg * 0.5));   // 擦傷：最終傷害剩 50%
     _outDmg = Math.max(1, Math.floor(_outDmg * fragileMult(target)));   // 🔮 脆弱（白鳥5）：受所有來源傷害 +20%
     _outDmg = Math.max(1, Math.floor(_outDmg * wpnEnFinalMult(player.eq.wpn)));   // 🔧 武器強化 +11~+20：最終傷害倍率（×1.1~×2.0，取該階段值）
-    if (_cw && _cw.finalMult) _outDmg = Math.max(1, Math.floor(_outDmg * _cw.finalMult));   // 🏛️ 武器最終傷害倍率（古老武器 ×1.5）
-    if (player._setRedLion5) _outDmg = Math.max(1, Math.floor(_outDmg * 1.2));   // 🔮 紅獅 5/5：最終傷害 +20%（普攻及所有走本函式的物理攻擊：反擊/居合/看破/連擊/連射/穿透/魔擊/物理技能）
+    if (_cw && _cw.finalMult) _outDmg = Math.max(1, Math.floor(_outDmg * _cw.finalMult));   // 🏛️ 武器最終傷害倍率（古老武器 ×2）
+    _outDmg = Math.max(1, Math.floor(_outDmg * rlFuryMult()));   // 🔮 紅獅5/5(×1.2)＋😡狂怒5/5：最終傷害（普攻及所有走本函式的物理攻擊：反擊/居合/看破/連擊/連射/穿透/魔擊/物理技能）
+    _outDmg = Math.max(1, Math.floor(_outDmg * elementCounterMult(_wAff && _wAff.ele, target.e)));   // ⚔️ 屬性剋制：武器屬性詞綴剋怪 ×1.4、被剋 ×0.6（無屬性詞綴→×1）
     if (heavy && player.mastery === 'k_cleave' && _cw && _cw.eff === 'cleave') _outDmg = Math.max(1, Math.floor(_outDmg * 1.5));   // 🏅 切割精通：觸發重擊時傷害 ×1.5
     return { dmg: _outDmg, hit: true, heavy: heavy, crit: isCrit, graze: graze, crush: crush, ranged: isRanged };
 }
@@ -876,7 +917,8 @@ function procLightArrow(t) {
     d = Math.max(1, Math.floor(d * wpnEnFinalMult(player.eq.wpn)));   // 🔧 武器強化 +11~+20：最終傷害倍率（共鳴光箭比照奇古獸/物理武器；與 tooltip 顯示一致）
     d = Math.max(1, Math.floor(d * fragileMult(t)));   // 🔮 脆弱（白鳥5）
     if (hasMastery('m_resonance')) d = Math.max(1, d + 5);   // 🏅 共鳴精通：光箭傷害 +5
-    if (player._setRedLion5) d = Math.max(1, Math.floor(d * 1.2));   // 🔮 紅獅 5/5：最終傷害 +20%
+    d = Math.max(1, Math.floor(d * rlFuryMult()));   // 🔮 紅獅5/5＋😡狂怒5/5：最終傷害
+    d = illusionMagicDmg(d, false);   // 🔮 幻覺2/5：共鳴光箭命中回MP（自動攻擊衍生→5件不加倍）
     t.curHp -= d;
     t.justHit = 'magic';
     if (t.st && t.st.mrhalf > 0) t.st.mrhalf = 0;
@@ -890,10 +932,10 @@ function procLightArrow(t) {
     } else {
         renderMobs();
     }
-    // 🔮 魔女 5/5：累計共鳴次數，每 5 次免費施放一次冰矛圍籬
+    // 🔮 魔女 5/5：累計共鳴次數，每 5 次免費發動一次冰雪暴（冰雪颶風風暴傷害·免學·不吃法師階級加成）
     if (player._setWitch5) {
         player._witchResCnt = (player._witchResCnt || 0) + 1;
-        if (player._witchResCnt >= 5) { player._witchResCnt = 0; witchIceLance(); }
+        if (player._witchResCnt >= 5) { player._witchResCnt = 0; if (typeof stormBuffTick === 'function' && DB.skills['sk_blizzard_storm']) stormBuffTick(DB.skills['sk_blizzard_storm'], true); }
     }
 }
 // ===== 月光爆裂：對指定目標造成 1D30 + 2×強化等級 的風屬性固定傷害（不受魔法公式影響）=====
@@ -901,11 +943,11 @@ function procMoonburst(t) {
     if (!t || t.curHp <= 0) return;
     let en = capWpnEn((player.eq.wpn && player.eq.wpn.en) || 0);
     let mbDmg = roll(1, 30) + 2 * en;
-    let counterTxt = '';
-    if (isElementCounter('wind', t.e)) { mbDmg += 6; counterTxt = ' <span class="text-emerald-300 font-bold">(剋屬性!)</span>'; }   // 風剋水：額外 +6 固定傷害
-    mbDmg = Math.max(1, Math.floor(mbDmg * fragileMult(t)));   // 🔮 脆弱（白鳥5）
+    let _cm = elementCounterMult('wind', t.e);   // ⚔️ 風剋水 ×1.4、被地剋 ×0.6
+    let counterTxt = (_cm > 1) ? ' <span class="text-emerald-300 font-bold">(剋屬性!)</span>' : (_cm < 1 ? ' <span class="text-rose-300 font-bold">(被剋!)</span>' : '');
+    mbDmg = Math.max(1, Math.floor(mbDmg * fragileMult(t) * _cm));   // 🔮 脆弱（白鳥5）＋⚔️屬性剋制 ×1.4/×0.6
     mbDmg = Math.max(1, Math.floor(mbDmg * enhanceWpnFinalMult(en)));   // 🔧 武器強化 +11~+20：最終傷害倍率
-    if (player._setRedLion5) mbDmg = Math.max(1, Math.floor(mbDmg * 1.2));   // 🔮 紅獅 5/5：最終傷害 +20%
+    mbDmg = Math.max(1, Math.floor(mbDmg * rlFuryMult()));   // 🔮 紅獅5/5＋😡狂怒5/5：最終傷害
     t.curHp -= mbDmg;
     t.justHit = 'wind';
     logCombat(`<span class="font-bold" style="color:#67e8f9;text-shadow:0 0 6px #06b6d4;">【月光爆裂】</span>對 <span class="${getMobColor(t.lv)}">${t.n}</span> 造成 ${mbDmg} 點風屬性傷害！${counterTxt}`, 'player-special');
@@ -1024,7 +1066,7 @@ function procCounter(t) {
     let idx = mapState.mobs.findIndex(m => m && m.uid === t.uid);
     if (t.curHp <= 0) { if (idx !== -1) killMob(idx); }
     else renderMobs();
-    ironGuardSweep('反擊');   // 🔮 鐵衛 5/5
+    // 🔮 鐵衛 5/5：改由「受到傷害時」觸發（見 enemyPhysicalAttack / applyMobMagic），不再於反擊時觸發
 }
 // ===== 居合（武士刀）：對攻擊者打一次「必定命中、可自然重擊/爆擊」的一般攻擊；只打攻擊者 =====
 function procIai(t) {
@@ -1044,7 +1086,7 @@ function procIai(t) {
     let idx = mapState.mobs.findIndex(m => m && m.uid === t.uid);
     if (t.curHp <= 0) { if (idx !== -1) killMob(idx); }
     else renderMobs();
-    ironGuardSweep('居合');   // 🔮 鐵衛 5/5
+    // 🔮 鐵衛 5/5：改由「受到傷害時」觸發（見 enemyPhysicalAttack / applyMobMagic），不再於居合時觸發
 }
 // 雙擊（鋼爪/雙刀）：依武器 comboRate% 機率發動，追加一次「額外一般攻擊」，獨立判定命中、傷害＝完整一般攻擊（🔮 暗影5/5→額外攻擊再×1.5）；本身不再觸發雙擊/穿透等（不遞迴）。fullDmg=false（爆擊精通沿用）保留舊倍率×0.5（暗影5/5×1.0）
 // ===== 🐉 弱點曝光（weakExpose）：鎖鏈劍一般攻擊命中時依機率對目標附加堆疊（最多3層，鎖刃精通5層）；屠宰者命中時消耗並轉為額外傷害（見 castSkill 屠宰者）=====
@@ -1065,7 +1107,10 @@ function applyPlayerWeakExpose(target) {
 // 🏅 鎖刃精通：目標每有 1 層弱點曝光，對其最終傷害 +10%（最高 5 層 +50%）
 function weakExposeDmgMult(m) { return (hasMastery('k_chainblade') && m && m.weakExpose > 0) ? (1 + 0.1 * Math.min(5, m.weakExpose)) : 1; }
 // 🐉 龍血精通：所有技能 HP 消耗減半
-function effHpCost(sk) { return Math.ceil((sk.hpCost || 0) * (hasMastery('k_dragonblood') ? 0.5 : 1)); }
+function effHpCost(sk) {
+    if (sk && sk.hpCost && player && player._setDragonblood3 && player.buffs) player.buffs.sk_set_dragonscion = 100;   // 🐉 龍血3/5：施放HP消耗技→獲得「龍裔」10秒（受傷-15%·由減傷乘算鏈讀此 buff）
+    return Math.ceil((sk.hpCost || 0) * (hasMastery('k_dragonblood') ? 0.5 : 1));
+}
 // 🐉 龍鱗臂甲 額外攻擊：每攻擊週期追加 d.equipExtraAtk 次全傷害一般近戰攻擊（各自命中判定；不遞迴再觸發額外攻擊）
 function dragonExtraAttackProc(target) {
     let n = (player.d && player.d.equipExtraAtk) || 0;
@@ -1105,7 +1150,7 @@ function procCombo(t, fullDmg) {
             if (Math.random() * 100 < _cch) _cdmg *= 2;
         }
     }
-    let dmg = Math.max(1, Math.floor(_cdmg * (fullDmg ? (player._setShadow5 ? 1.5 : 1.0) : (player._setShadow5 ? 1.0 : 0.5))));   // 🔧 雙擊(fullDmg)：完整一般攻擊·暗影5/5再×1.5；爆擊精通額外攻擊(legacy)：×0.5·暗影5/5×1.0
+    let dmg = Math.max(1, Math.floor(_cdmg * (fullDmg ? (player._setShadow5 ? 2.0 : 1.0) : (player._setShadow5 ? 1.0 : 0.5))));   // 🔧 雙擊(fullDmg)：完整一般攻擊·暗影5/5傷害加倍(×2)；爆擊精通額外攻擊(legacy)：×0.5·暗影5/5×1.0
     t.curHp -= dmg;
     t.justHit = getWpnEle(player.eq.wpn, wpn);
     mobWake(t);
@@ -1185,23 +1230,24 @@ function reboundExtraAttack(mob) {
     if (mob.curHp <= 0 && idx !== -1) killMob(idx);
 }
 
-// 🔮 鐵衛 5/5：觸發反擊或居合時，額外對全體敵人造成一次一般攻擊（各自正常命中判定）
-function ironGuardSweep(triggerName) {
+// 🔮 鐵衛 5/5：受到傷害時，額外對全體敵人造成一次「必中」的一般攻擊（每 tick 最多觸發一次，避免連續受擊洗版）
+function ironGuardSweep() {
     if (!player._setIron5) return;
+    if (typeof state !== 'undefined' && state && player._ironSweepTick === state.ticks) return;   // 每 tick 節流
+    if (typeof state !== 'undefined' && state) player._ironSweepTick = state.ticks;
     let targets = [];
     mapState.mobs.forEach(m => { if (m && m.curHp > 0 && !m._dead) targets.push(m); });
     if (!targets.length) return;
-    logCombat(`<span class="font-bold" style="color:#93c5fd;text-shadow:0 0 6px #3b82f6;">【鐵衛 5/5】</span>${triggerName}引動鋼鐵之勢，橫掃全體敵人！`, 'player');
+    logCombat(`<span class="font-bold" style="color:#93c5fd;text-shadow:0 0 6px #3b82f6;">【鐵衛 5/5】</span>受擊反震，對全體敵人發動一次必中的反擊！`, 'player');
     targets.forEach(m => {
         if (!m || m.curHp <= 0 || m._dead) return;   // 可能已被前一刀的擊殺波及
         let wpn = player.eq.wpn ? DB.items[player.eq.wpn.id] : null;
         let dice = wpn ? (m.s === 'L' ? wpn.dmgL : wpn.dmgS) : 2;
-        let res = getPhysicalDmg(dice, m, wpn, null);
-        if (!res.hit) { logCombat(`橫掃 <span class="${getMobColor(m.lv)}">${m.n}</span> 未命中。`, 'miss'); return; }
+        let res = getPhysicalDmg(dice, m, wpn, null, false, true, false);   // forceHit=true → 必中
         m.curHp -= res.dmg;
         m.justHit = getWpnEle(player.eq.wpn, wpn);
         mobWake(m);
-        logCombat(`橫掃命中 <span class="${getMobColor(m.lv)}">${m.n}</span>，造成 ${res.dmg} 點傷害。`, 'player');
+        logCombat(`反擊命中 <span class="${getMobColor(m.lv)}">${m.n}</span>，造成 ${res.dmg} 點傷害。`, 'player');
         if (m.curHp <= 0) { let ri = mapState.mobs.findIndex(x => x && x.uid === m.uid); if (ri !== -1) killMob(ri); }
     });
     renderMobs();
@@ -1225,10 +1271,10 @@ function witchIceLance() {
     let mageMult = 1.0;   // 🔧 魔女5/5(共鳴觸發)為武器特效，不再吃法師「法術階級加成」(1.5+階/20)
     let critMult = isCrit ? (1 + player.d.magicCritDmg/100) : 1;
     let core = roll(sk.dmgDice[0], sk.dmgDice[1]) * spCoef * critMult;
-    let fixed = (t.e === 'fire') ? 6 : 0;   // 水剋火
-    let dmg = Math.max(1, Math.floor((core + player.d.extraMp) * mrFactor) - (t.dr||0)) + fixed;
+    let dmg = Math.max(1, Math.floor((core + player.d.extraMp) * mrFactor) - (t.dr||0));
+    dmg = Math.max(1, Math.floor(dmg * elementCounterMult('water', t.e)));   // ⚔️ 水剋火 ×1.4、被風剋 ×0.6（取代舊 +6）
     dmg = Math.floor(dmg * mageMult);
-    if (player._setRedLion5) dmg = Math.floor(dmg * 1.2);   // 🔮 紅獅 5/5 同樣適用（攻擊技能）
+    dmg = Math.max(1, Math.floor(dmg * rlFuryMult()));   // 🔮 紅獅5/5＋😡狂怒5/5（攻擊技能）
     dmg = Math.max(1, Math.floor(dmg * fragileMult(t)));
     dmg = Math.max(1, Math.floor(dmg * wpnEnFinalMult(player.eq.wpn)));   // 🔧 武器強化 +11~+20 最終倍率：補上（與共鳴光箭/傭兵魔女冰矛一致·統一武器特效公式）
     t.curHp -= dmg;
@@ -1274,9 +1320,10 @@ function qiguPlayerAttack(target, wpn) {
     let ignoreMr = (player.mastery === 'i_qigu' && wpn.qigu);   // 🔮 奇古獸精通：裝備奇古獸時無視魔抗
     let dmg = Math.max(1, Math.floor(raw * (ignoreMr ? 1 : mrMult(effMr))));
     let ele = 'none';
-    if (player.eq.wpn && player.eq.wpn.attr && ATTR_AFFIX[player.eq.wpn.attr]) { ele = ATTR_AFFIX[player.eq.wpn.attr].ele; if (isElementCounter(ele, target.e)) dmg += 6; }
+    if (player.eq.wpn && player.eq.wpn.attr && ATTR_AFFIX[player.eq.wpn.attr]) { ele = ATTR_AFFIX[player.eq.wpn.attr].ele; }
+    dmg = Math.max(1, Math.floor(dmg * elementCounterMult(ele, target.e)));   // ⚔️ 屬性剋制 ×1.4(剋)/×0.6(被剋)（取代舊 +6）
     dmg = Math.max(1, Math.floor(dmg * wpnEnFinalMult(player.eq.wpn)));   // 武器強化 +11~+20 最終倍率
-    if (player._setRedLion5) dmg = Math.floor(dmg * 1.2);   // 🔮 紅獅 5/5
+    dmg = Math.max(1, Math.floor(dmg * rlFuryMult()));   // 🔮 紅獅5/5＋😡狂怒5/5
     dmg = Math.max(1, Math.floor(dmg * fragileMult(target) * illuLvMult(player)));   // 🔮 脆弱/破甲；🔮 幻術士等級加成 ×(1+等級/50)
     target.curHp -= dmg;
     target.justHit = (ele !== 'none') ? ele : 'magic';

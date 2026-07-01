@@ -115,7 +115,51 @@ function vfxKill(mob) {
           }
         }
         let color = mob.boss ? '#ffd54f' : '#ff8a5c';
-        let n = mob.boss ? 22 : 13;
+        // ✨ 強化死亡表現（讓「怪物被消滅」更明顯）：白閃殘影 + 衝擊波環 + 核心爆閃。場上特效過多(>150)時略過較重的殘影/環，只留粒子，避免大量 AoE 連殺洗版。
+        if (layer.childElementCount < 150) {
+            // 1) 死亡殘影：複製怪物圖像 → 白化＋放大＋淡出（強烈的「被抹除」感）
+            try {
+                let _img = box.querySelector('img');
+                if (_img && _img.src && _img.naturalWidth !== 0) {
+                    let gh = document.createElement('img');
+                    gh.className = 'vfx-ghost'; gh.src = _img.src;
+                    gh.style.left = cx + 'px'; gh.style.top = (r.top + r.height / 2) + 'px';
+                    gh.style.width = r.width + 'px'; gh.style.height = r.height + 'px';
+                    layer.appendChild(gh);
+                    gh.animate(
+                        [ { transform: 'translate(-50%,-50%) scale(1)', opacity: .85, filter: 'brightness(2.6) saturate(.25)' },
+                          { transform: 'translate(-50%,-50%) scale(' + (mob.boss ? 1.62 : 1.42) + ')', opacity: 0, filter: 'brightness(3.4) saturate(0)' } ],
+                        { duration: mob.boss ? 520 : 400, easing: 'cubic-bezier(.2,.6,.2,1)' }
+                    ).onfinish = () => gh.remove();
+                }
+            } catch (e) {}
+            // 2) 衝擊波環：自死亡點擴張的圓環
+            let ring = document.createElement('div'); ring.className = 'vfx-killring';
+            let _rsz = mob.boss ? 64 : 44;
+            ring.style.left = cx + 'px'; ring.style.top = cy + 'px';
+            ring.style.width = _rsz + 'px'; ring.style.height = _rsz + 'px';
+            ring.style.borderColor = color; ring.style.boxShadow = '0 0 12px ' + color + ', inset 0 0 12px ' + color;
+            layer.appendChild(ring);
+            ring.animate(
+                [ { transform: 'translate(-50%,-50%) scale(.3)', opacity: .95 },
+                  { transform: 'translate(-50%,-50%) scale(' + (mob.boss ? 2.0 : 1.7) + ')', opacity: 0 } ],
+                { duration: mob.boss ? 520 : 420, easing: 'cubic-bezier(.15,.7,.3,1)' }
+            ).onfinish = () => ring.remove();
+            // 3) 核心爆閃：死亡點一團白熱光迅速擴散消失
+            let core = document.createElement('div'); core.className = 'vfx-particle';
+            let _csz = mob.boss ? 40 : 26;
+            core.style.width = _csz + 'px'; core.style.height = _csz + 'px';
+            core.style.left = cx + 'px'; core.style.top = cy + 'px';
+            core.style.background = 'radial-gradient(circle, #fff 18%, ' + color + ' 55%, rgba(0,0,0,0) 76%)';
+            core.style.boxShadow = '0 0 20px ' + color;
+            layer.appendChild(core);
+            core.animate(
+                [ { transform: 'translate(-50%,-50%) scale(.35)', opacity: 1 },
+                  { transform: 'translate(-50%,-50%) scale(1.45)', opacity: 0 } ],
+                { duration: 280, easing: 'ease-out' }
+            ).onfinish = () => core.remove();
+        }
+        let n = mob.boss ? 28 : 18;   // ✨ 爆裂粒子數提高（原 22/13）→ 死亡更顯眼
         for (let i = 0; i < n; i++) {
             let pt = document.createElement('div');
             pt.className = 'vfx-particle';
@@ -329,6 +373,16 @@ if (typeof castSkill === 'function' && !castSkill._vfxWrapped) {
     castSkill._vfxWrapped = true;
 }
 
+// 🎲 怪物視覺散佈：依 uid 決定論偽隨機(FNV-1a)→每隻怪在版位上加位移＋輕微縮放，看起來「隨機出沒」而非整齊前後排。
+//    純視覺·不影響戰鬥/目標/特效命中：transform 套在整張 .mob-target 上→點擊熱區與 VFX(getBoundingClientRect) 皆隨之移動。
+//    同一隻怪存活期間 uid 不變→位置固定不抖；死亡換新 uid 才換位置(營造隨機出沒)。頭目(boss-slot/boss-zoom)不散佈、維持置中。
+function _mobScatter(uid) {
+    let h = 2166136261 >>> 0, su = '' + uid;
+    for (let i = 0; i < su.length; i++) { h ^= su.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    let a = (h & 1023) / 1023, b = ((h >>> 10) & 1023) / 1023, c = ((h >>> 20) & 1023) / 1023;
+    let dx = Math.round((a * 2 - 1) * 60), dy = Math.round((b * 2 - 1) * 34), sc = (0.88 + c * 0.24).toFixed(3);
+    return `transform:translate(${dx}px,${dy}px);--jit-scale:${sc};`;
+}
 function _renderMobsImpl() {
     if(state.ff) return; // 補跑期間不刷新畫面
     _initMobListGuard();
@@ -367,7 +421,9 @@ function _renderMobsImpl() {
             let _statRow = !_showMobStatus ? '' : `${(m.bleeds && m.bleeds.length) ? `<span class="text-[11px] font-bold" style="display:inline-flex;align-items:center;line-height:1;" title="出血層數">🩸×${m.bleeds.length}</span>` : ''}${(m._burstPoison && m._burstPoison.left > 0) ? `<span class="text-[11px] font-bold" style="display:inline-flex;align-items:center;line-height:1;color:#a3e635;" title="猛爆劇毒：每秒100固定傷害（5秒）">💥毒</span>` : ''}${(m._bluntShow && state.ticks < m._bluntShow) ? `<span class="text-[11px] font-bold text-amber-300" style="display:inline-flex;align-items:center;line-height:1;" title="鈍擊：攻擊延遲中">🔨鈍</span>` : ''}${(m.hardSkin > 0) ? `<span class="text-[11px] font-bold text-stone-300" style="display:inline-flex;align-items:center;line-height:1;" title="硬皮值：額外物理減傷（魔法不減），可用鈍器/重擊消磨">🛡${m.hardSkin}</span>` : ''}`;
 
             let _hpBar = !_showMobHp ? '' : `<div class="mob-hp-bar flex justify-center mb-1" style="height:6px;"><div style="width:50px;height:5px;background:#475569;border-radius:3px;overflow:hidden;"><div style="height:100%;background:#ef4444;width:${Math.max(0, Math.min(100, Math.round((m.curHp / (m.hp || 1)) * 100)))}%;"></div></div></div>`;
-            _slotHtmls[_k] = `<div class="mob-target ${act}${_rowCls}${BOSS_BIG_MAPS.includes(mapState.current) ? ' boss-slot' : (m.boss ? ' boss-zoom' : '')}" data-uid="${m.uid}" onclick="setTarget(${i})">
+            let _isBossUnit = BOSS_BIG_MAPS.includes(mapState.current) || m.boss;   // 🎲 頭目不散佈(維持置中大圖)
+            let _scat = _isBossUnit ? '' : ` style="${_mobScatter(m.uid)}"`;
+            _slotHtmls[_k] = `<div class="mob-target ${act}${_rowCls}${BOSS_BIG_MAPS.includes(mapState.current) ? ' boss-slot' : (m.boss ? ' boss-zoom' : '')}" data-uid="${m.uid}"${_scat}>
                         <div class="flex justify-center text-sm mb-1 mob-name">
                             <span class="${getMobNameClass(m)}">${m.n}</span>
                         </div>

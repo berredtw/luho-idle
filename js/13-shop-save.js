@@ -48,7 +48,7 @@ const SPECIAL_AREA_BG = {   // 特殊地圖：逐張對應背景
     law_king_room: 'assets/area/軍王之室.jpg',      // 👑 法令軍王之室
     necro_king_room: 'assets/area/軍王之室.jpg',    // 👑 冥法軍王之室
     assassin_king_room: 'assets/area/軍王之室.jpg', // 👑 暗殺軍王之室
-    elder_room: 'assets/area/軍王之室.jpg',         // 🏛️ 格蘭肯神殿．長老之室（拉斯塔巴德新狩獵地圖·借用軍王之室背景）
+    elder_room: 'assets/area/長老之室.jpg',         // 🏛️ 格蘭肯神殿．長老之室（拉斯塔巴德新狩獵地圖·專屬背景）
     thebes_desert: 'assets/area/底比斯沙漠.jpg',   // 🏛️ 底比斯 沙漠（專屬背景）
     thebes_pyramid: 'assets/area/底比斯.jpg',      // 🏛️ 底比斯 金字塔內部（與祭壇共用底比斯背景）
     thebes_temple: 'assets/area/底比斯.jpg',        // 🏛️ 底比斯 歐西里斯祭壇（純BOSS房）
@@ -57,6 +57,10 @@ const SPECIAL_AREA_BG = {   // 特殊地圖：逐張對應背景
 };
 const CATEGORY_AREA_BG = { wild: 'assets/area/村莊周邊.jpg', dungeon: 'assets/area/地監.jpg', siege: 'castle.png', tower: 'assets/area/傲慢之塔.jpg', rift: 'Rift.png' };   // 🆕 野外/地監/傲慢之塔狩獵改 area-fit 沙漠格式新背景；siege/rift 暫維持 16:9 cover。🗼 塔狩獵=傲慢之塔.jpg，入口安全區另由 TOWN_AREA_BG.tower 保留 TowerofInsolence.png 不變；🏛️ 底比斯3圖另由 SPECIAL_AREA_BG 覆寫（底比斯沙漠.jpg／底比斯.jpg）
 const AREA_BG_FIT = new Set(['assets/area/沙漠.jpg', 'assets/area/水晶洞穴.jpg', 'assets/area/地監.jpg', 'assets/area/火龍窟.jpg', 'assets/area/森林.jpg', 'assets/area/村莊周邊.jpg', 'assets/area/傲慢之塔.jpg', 'assets/area/洞窟.jpg', 'assets/area/象牙塔.jpg', 'assets/area/伊娃王國.jpg', 'assets/area/城鎮周邊.jpg', 'assets/area/歐瑞.jpg', 'assets/area/拉斯塔巴德.jpg', 'assets/area/軍王之室.jpg', 'assets/area/安塔瑞斯.jpg', 'assets/area/法利昂.jpg', 'assets/area/巴拉卡斯.jpg', 'assets/area/底比斯沙漠.jpg', 'assets/area/底比斯.jpg', 'assets/area/龍之谷.jpg', 'assets/area/說話之島港口.jpg', 'assets/area/遺忘之島.jpg', 'assets/area/夢幻之島.jpg', 'assets/area/艾爾摩.jpg', 'assets/area/地監深層.jpg', 'assets/area/象牙塔深層.jpg', 'assets/area/龍之谷地監深層.jpg', 'assets/area/古魯丁.jpg', 'assets/area/說話之島地監1樓.jpg']);   // 🏜️ 條狀比例(非16:9·1920×580)背景：用 contain+area-fit(框高鎖圖比例·無上下黑邊·省空間給戰鬥日誌)。所有新狩獵區背景都列於此→自動套沙漠格式。⚠️這些 jpg 需放 assets/area/（同沙漠.jpg）；未放檔時背景空白但版面/格式仍正確。日後新增條狀背景就把路徑加進來
+// ⚔️ v2.5.2：area-fit(怪物站立帶/2排·見 applyAreaBackground)改「預設全開、僅黑名單例外」。
+//   原本用白名單 AREA_BG_FIT＋圖比例 1920/580 判定→換成 16:9 背景圖時判不到→怪物退回 96px 變很小(打包版顯著)。
+//   現在：除了攻城(castle.png)/裂痕(Rift.png) 維持 16:9 置中，其餘所有狩獵區背景一律 area-fit→更換背景圖(任何比例)免再維護白名單。
+const AREA_BG_NOFIT = new Set(['castle.png', 'Rift.png']);
 const SPECIAL_TOWN_BG = { town_silent: 'silentcave.png' };                                        // 🔧 安全區逐張對應背景（沉默洞穴）
 const TOWN_AREA_BG = { village: 'village.png', castle: 'castle.png', tower: 'TowerofInsolence.png', rift: 'Rift.png' };   // 村莊畫面依分類（🗼 傲慢之塔入口；🌀 時空裂痕入口 Rift.png）
 // 🆕 同名背景圖：地圖顯示名稱(MAP_CATEGORIES 的 t) → 嘗試 assets/area/[名稱].jpg；探測結果快取(undefined=未探測、null=探測中、{found,fit}=結果)
@@ -66,7 +70,9 @@ function applyAreaBackground() {
     let cur = mapState.current, cat = mapCategoryOf(cur);
     let ov = a => `linear-gradient(rgba(15,23,42,${a}), rgba(15,23,42,${a}))`;
     let bv = document.getElementById('battle-view');
-    if (bv) {
+    if (bv && cur.startsWith('town_')) {   // 🏙️ v2.6.0：安全區(town_)戰鬥框恆隱藏、絕不套狩獵背景。必須清掉 area-fit/has-bg——否則 CSS `#battle-view.area-fit{display:flex}`(1,1,0) 會蓋過 `.hidden`(0,1,0) 使隱藏的戰鬥框又顯示、露出與安全區同名的狩獵圖(如象牙塔/傲慢之塔安全區顯示名＝有同名 assets/area/<名>.jpg)。
+        bv.style.backgroundImage = ''; bv.style.backgroundSize = ''; bv.classList.remove('area-fit'); bv.classList.remove('has-bg');
+    } else if (bv) {
         let fbImg = SPECIAL_AREA_BG[cur] || CATEGORY_AREA_BG[cat] || null;   // 既有設定圖(fallback)：特殊地圖逐張優先，否則依分類(野外/地監/攻城)
         let useSrc = null, useFit = false;
         // 🆕 優先尋找「同名地圖圖檔」assets/area/[地圖名稱].jpg：存在才用、找不到才退回 fallback。瀏覽器無法同步判斷檔案是否存在→非同步探測＋快取(首訪先顯示 fallback、載入成功後切換)
@@ -79,13 +85,13 @@ function applyAreaBackground() {
             if (_nm && _areaNameBgCache[cur] === undefined) {   // 首次探測：背景先走 fallback，同名圖若載入成功則切換並快取
                 _areaNameBgCache[cur] = null;   // pending
                 let _probe = new Image(), _id = cur;
-                _probe.onload = function(){ let _r = _probe.naturalHeight ? (_probe.naturalWidth / _probe.naturalHeight) : 0; _areaNameBgCache[_id] = { found: true, fit: Math.abs(_r - 1920 / 580) < 0.4 }; if (mapState.current === _id) applyAreaBackground(); };
+                _probe.onload = function(){ _areaNameBgCache[_id] = { found: true, fit: true }; if (mapState.current === _id) applyAreaBackground(); };   // 🆕 v2.5.2：同名背景圖一律 area-fit（不再依圖比例·16:9/條狀皆套怪物站立帶）
                 _probe.onerror = function(){ _areaNameBgCache[_id] = { found: false }; };
                 _probe.src = `assets/area/${_nm}.jpg`;
             }
-            if (fbImg) { useSrc = fbImg.indexOf('/') >= 0 ? fbImg : `assets/background/${fbImg}`; useFit = AREA_BG_FIT.has(fbImg); }
+            if (fbImg) { useSrc = fbImg.indexOf('/') >= 0 ? fbImg : `assets/background/${fbImg}`; useFit = !AREA_BG_NOFIT.has(fbImg); }   // ⚔️ v2.5.2：預設 area-fit、僅攻城/裂痕(AREA_BG_NOFIT)例外
         }
-        if (useSrc) { bv.style.backgroundImage = `url("${useSrc}")`; bv.style.backgroundSize = useFit ? 'contain' : ''; bv.classList.toggle('area-fit', useFit); bv.classList.add('has-bg'); }   // 🔧 條狀比例背景用 contain＋area-fit(框高鎖圖比例)、其餘清空 inline 回退 CSS 的 cover
+        if (useSrc) { bv.style.backgroundImage = `url("${useSrc}")`; bv.style.backgroundSize = useFit ? 'cover' : ''; bv.classList.toggle('area-fit', useFit); bv.classList.add('has-bg'); }   // 🖥️ 條狀比例背景改 cover＋area-fit(戰鬥框由 flex 吃滿地圖面板·背景滿版置中裁切)、其餘清空 inline 回退 CSS 的 cover
         else { bv.style.backgroundImage = ''; bv.style.backgroundSize = ''; bv.classList.remove('area-fit'); bv.classList.remove('has-bg'); }
     }
     let tv = document.getElementById('town-view');
@@ -255,10 +261,10 @@ function renderShopItems() {
 
 function migrateSaves(){
     // 舊單一存檔 → 第1格（既有玩家預設落在存檔1）
-    let oldS = localStorage.getItem('lineage_idle_save');
-    if(oldS && !localStorage.getItem('lineage_idle_save_1')) localStorage.setItem('lineage_idle_save_1', oldS);
+    let oldS = _lsGet('lineage_idle_save');
+    if(oldS && !_lsGet('lineage_idle_save_1')) _lsSet('lineage_idle_save_1', oldS);
 }
-function anySaveExists(){ return ['1','2','3','4','5','6','7','8'].some(n => localStorage.getItem('lineage_idle_save_' + n)); }
+function anySaveExists(){ return ['1','2','3','4','5','6','7','8'].some(n => _lsGet('lineage_idle_save_' + n)); }
 function _summaryFromRaw(s){
     if(!s) return null;
     s = _saveUnwrap(s).payload;   // 🛡️ 先解存檔簽章（摘要顯示不驗章、僅取 payload；舊明文檔原樣回傳）
@@ -387,8 +393,8 @@ function importSave(n){
             let whData = d.wh;
             let saveText = text;
             if(whData !== undefined){ let _c = {}; for(let k in d){ if(k !== 'wh') _c[k] = d[k]; } saveText = JSON.stringify(_c); }
-            let cur = localStorage.getItem('lineage_idle_save_' + n);
-            if(cur) localStorage.setItem('lineage_idle_save_' + n + '_bak', cur);   // 匯入前自動備份原存檔
+            let cur = _lsGet('lineage_idle_save_' + n);
+            if(cur) _lsSet('lineage_idle_save_' + n + '_bak', cur);   // 匯入前自動備份原存檔
             _lzSet('lineage_idle_save_' + n, _saveWrap(saveText));   // 💾 匯入 → 以本機簽章重新封裝後壓縮存入（之後讀檔即可驗章）
             // 🔧 詢問是否一併還原共用倉庫（會覆蓋現有倉庫，四個存檔位共用）
             let whMsg = '';
@@ -412,11 +418,11 @@ function importSave(n){
 }
 // 復原匯入前自動建立的備份：把備份寫回該存檔位（取代目前內容）。
 function restoreBackup(n){
-    let bak = localStorage.getItem('lineage_idle_save_' + n + '_bak');
+    let bak = _lsGet('lineage_idle_save_' + n + '_bak');
     if(!bak){ alert('沒有可復原的備份。'); return; }
     let b = slotBackupSummary(n);
     if(!confirm(`確定要將存檔 ${n} 復原為匯入前的備份${b ? `（${b.cls} Lv.${b.lv}　${b.name}）` : ''}嗎？\n目前存檔 ${n} 的內容將被取代。`)) return;
-    localStorage.setItem('lineage_idle_save_' + n, bak);
+    _lsSet('lineage_idle_save_' + n, bak);
     openSlotSelect(_slotMode);   // 刷新清單
     alert(`存檔 ${n} 已復原為匯入前的備份。`);
 }
@@ -482,7 +488,7 @@ function selectClass(c) {
     } else if (curCreate.cls === 'warrior') {
         document.getElementById('class-desc').innerText = "戰士：力量與體質兼備的純近戰職業，專精斧頭與鈍器、可雙持單手鈍器，魔防偏低。出生於海音。";
     } else if (curCreate.cls === 'royal') {
-        document.getElementById('class-desc').innerText = "王族：天生的領袖，傭兵上限隨魅力提升（3＋魅力/15，最多 7 名），習得王族專屬魔法。天生加入血盟、不可退出。出生於說話之島。";
+        document.getElementById('class-desc').innerText = "王族：天生的領袖，傭兵上限與其他職業相同（最多 3 名）；但攜帶的傭兵與項圈夥伴可獲得王族魅力加成——造成傷害、HP、MP 皆 ×(1＋魅力/100)。習得王族專屬魔法。天生加入血盟、不可退出。出生於說話之島。";
     }
     
     document.getElementById('stat-allocation').style = "";
@@ -593,9 +599,10 @@ function startGame() {
             gainItem('bk_lightarrow', 1, true, true); // 光箭魔法書
         }
     }
-    if (typeof loadSharedCollections === 'function') loadSharedCollections();   // 🎴🗡️ 創角：載入同模式共用收集圖鑑（新角色即承接同模式既有收集）
-    gainItem('item_card_book', 1, true, true);   // 🎴 卡片收集冊（全職業創角預設）
-    if (typeof ensureEquipBook === 'function') ensureEquipBook();   // 🗡️ 裝備收集冊（全職業創角預設＋登錄起始裝備）
+    if (typeof loadSharedCollections === 'function') loadSharedCollections();   // 🎴🗡️🧰 創角：載入同模式共用收集圖鑑（新角色即承接同模式既有收集）
+    if (typeof ensureCardBook === 'function') ensureCardBook();   // 🎴 怪物收集冊改由「收藏」面板開啟（移除道具欄本體）
+    if (typeof ensureEquipBook === 'function') ensureEquipBook();   // 🗡️ 裝備收集冊改由「收藏」面板開啟＋登錄起始裝備
+    if (typeof ensureMiscDex === 'function') ensureMiscDex();   // 🧰 道具收集冊：登錄起始道具
 
     calcStats();
     player.hp = player.mhp; player.mp = player.mmp;
@@ -814,8 +821,9 @@ function loadGame() {
         // 日後新增欄位只需登錄於 SAVE_DEFAULTS；上方逐項 if(undefined) 為歷史遷移，不必再增列。
         applySaveDefaults(player);
         if (typeof loadSharedCollections === 'function') loadSharedCollections();   // 🎴🗡️ 讀檔：載入同模式共用收集圖鑑（卡片/裝備·併入該角色既有資料）
-        if (typeof ensureCardBook === 'function') ensureCardBook();   // 🎴 舊存檔保底：道具欄補一本卡片收集冊
-        if (typeof ensureEquipBook === 'function') ensureEquipBook();   // 🗡️ 舊存檔保底：補裝備收集冊＋登錄現有(背包/已裝備)裝備
+        if (typeof ensureCardBook === 'function') ensureCardBook();   // 🎴 舊存檔遷移：移除道具欄的卡片收集冊本體（改由「收藏」面板開啟）
+        if (typeof ensureEquipBook === 'function') ensureEquipBook();   // 🗡️ 舊存檔遷移：移除裝備收集冊本體＋登錄現有(背包/已裝備)裝備
+        if (typeof ensureMiscDex === 'function') ensureMiscDex();   // 🧰 舊存檔遷移：登錄現有道具到道具收集冊
 
         // 👇 正確的新版起點邏輯
         // 🔧 讀檔回「家」改走 getHomeTown()：血盟成員回盟主村莊（海音/歐瑞），否則回職業起始村，與回村按鈕邏輯一致
@@ -899,7 +907,8 @@ function loadGame() {
         }
         
         updateClassPotionRows();
-        
+        try { if (typeof _renderAutoSellBtn === 'function') _renderAutoSellBtn(); } catch (e) {}   // 🗑️ 還原「自動賣出」按鈕點亮/變暗狀態（player.autoSellOn）
+
         state.running = true;
         // 自然恢復（每 16 秒）已由主迴圈 tick() 內的 state.ticks % 160 統一驅動，不再額外 setInterval。
         // 計時器統一由 startGameTimers() 註冊（內含去重），含每 5 分鐘自動存檔。

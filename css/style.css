@@ -1,14 +1,26 @@
+        /* 🔤 字型：與網頁版一致，使用系統字型後備堆疊（Segoe UI / 微軟正黑體…），不內嵌自訂字型，確保打包版與網頁版排版完全相同。 */
         body { 
     background-color: #14121f;
     background-image: url('../assets/background/background.png'); /* 👈 在這裡填入你的圖片檔名 */
     background-size: cover; 
     background-position: center; 
     background-repeat: no-repeat;
-    color: #f8fafc; 
-    font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
-    overflow: hidden; 
-    user-select: none; 
+    color: #f8fafc;
+    font-family: "Segoe UI", "Microsoft JhengHei UI", "Microsoft JhengHei", "微軟正黑體", Roboto, "Helvetica Neue", Arial, sans-serif;
+    overflow: hidden;
+    user-select: none;
 }
+        /* 🔤 表單控制項（下拉選單/輸入框/按鈕）強制繼承全站字型——native <select> 的選項清單預設不繼承，
+           會挑到不同的中文後備字，導致「展開的選項」字體與「關閉的值/全站文字」不一致。釘住同一套字型修正之。 */
+        select, option, optgroup, input, textarea, button { font-family: inherit; }
+        /* 🖥️ 打包版自訂下拉彈出層（.cdd-pop·見 js/11 openCustomSelectPopup）：Electron 原生 <select> 的彈出選單間距過擠且 padding/行高不可調，
+           故僅打包版(html.pkg-build)攔截下拉、改用此自訂彈出層→間距完全可控、與遊戲深色主題一致。網頁版 <html> 無 .pkg-build → 維持原生選單、完全不受影響。 */
+        .cdd-pop { position: fixed; z-index: 9999; background: #1e293b; border: 1px solid #64748b; border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,0.7); padding: 5px; max-height: 60vh; overflow-y: auto; }
+        .cdd-opt { padding: 9px 16px; border-radius: 5px; color: #e2e8f0; font-size: 1rem; line-height: 1.45; cursor: pointer; white-space: nowrap; }
+        .cdd-opt:hover { background: #334155; }
+        .cdd-opt.cdd-sel { background: #2563eb; color: #fff; }
+        .cdd-disabled { color: #64748b !important; cursor: not-allowed; opacity: 0.75; }
+        .cdd-disabled:hover { background: transparent; }
         body.game-bg-dim { background-image: linear-gradient(rgba(18,14,34,0.84), rgba(12,9,26,0.88)), url('../assets/background/background.png'); }  /* 正式開始遊戲後：背景淡化（紫黑色調） */
         .log-bg { border: 3px solid transparent; border-bottom-width: 1px; background: linear-gradient(180deg, #23282e 0%, #3e4651 50%, #1d2025 100%) padding-box, linear-gradient(135deg, #1e3a8a 0%, #4f46e5 20%, #6d28d9 42%, #06b6d4 60%, #4338ca 80%, #8b5cf6 100%) border-box; }  /* 日誌訊息區：較深灰底 + 黃褐不規則漸層邊框 */
         .panel { background: #16142b padding-box, linear-gradient(135deg, #1e3a8a 0%, #4f46e5 20%, #6d28d9 42%, #06b6d4 60%, #4338ca 80%, #8b5cf6 100%) border-box; border: 2px solid transparent; border-bottom-width: 1px; border-radius: 0.75rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; }
@@ -33,7 +45,7 @@
         .list-item { padding: 0.75rem; border-bottom: 1px solid #334155; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 1rem; width: 100%;}
         .list-item:hover { background: #334155; }
         .set-active { background: #451a03 !important; border: 1px solid #b45309 !important; }   /* 🔧 舊套裝改琥珀金（綠色讓給席琳套裝） */
-        .mob-target { padding: 0.75rem; border: 2px solid #334155; border-radius: 0.5rem; background: #0f172a; cursor: pointer; flex: 1; text-align: center; display: flex; flex-direction: column; justify-content: center; transition: all 0.2s; height: 224px; overflow: hidden;}
+        .mob-target { padding: 0.75rem; border: 2px solid #334155; border-radius: 0.5rem; background: #0f172a; cursor: default; flex: 1; text-align: center; display: flex; flex-direction: column; justify-content: center; transition: all 0.2s; height: 224px; overflow: hidden;}   /* 🔧 v2.5.9：怪物卡不再是可點擊按鈕(移除 onclick=setTarget)→游標改 default；目標改全自動(getTarget)、保留 .active 紅框顯示當前自動目標與 hover 顯示怪名 */
         .mob-target.active { border-color: #ef4444; background: #450a0a; }
         /* 🪆 魔法娃娃游標：裝備娃娃時(body.has-doll-cursor 由 applyDollCursor 切換)，連可點擊處(.btn/.list-item/.mob-target/.cf-pill/Tailwind cursor-pointer 等)也維持娃娃游標、不變回手指箭頭。* 繼承 body 的內聯娃娃游標；專案無任何 cursor !important 故此 !important 必勝。 */
         body.has-doll-cursor * { cursor: inherit !important; }
@@ -95,13 +107,27 @@
         #battle-view.has-bg .mob-target.active .mob-img-inner { filter: drop-shadow(0 0 4px #ef4444) drop-shadow(0 0 7px #ef4444); }   /* 🔴 紅色鎖定光暈只套在「怪物圖」上(沿輪廓)，不影響名字/徽章/狀態 */
         #battle-view.has-bg .mob-target:hover:not(.active) { background: transparent !important; }
         /* 🏜️ 條狀比例背景(沙漠等·套 area-fit)：戰鬥框高度鎖定＝圖片比例(1920/580)，背景滿版貼齊「上緣」、任何視窗寬度都無上下黑邊；省下的高度由下方戰鬥日誌(flex-1)自動吸收長高。怪物卡填滿框高、怪物圖改彈性填中段隨高度縮放(名稱/血量/異常徽章固定不裁) */
-        #battle-view.area-fit { aspect-ratio: 1920 / 580; background-position: top center; overflow: hidden; }
-        #battle-view.area-fit #mob-list { height: 100%; }
+        #battle-view.area-fit:not(.hidden) { display: flex; align-items: flex-end; background-position: center; overflow: hidden; }   /* 🖥️ 戰鬥框加大(吃滿地圖面板)·背景改 cover 滿版置中(見 js/13)；怪物列(#mob-list)靠「下緣」站立(align-items:flex-end)→上方大片背景、下方怪物站在地面。⚠️v2.6.0 加 :not(.hidden)：安全區 battle-view 帶 .hidden 時本規則(1,1,0)不得蓋過 .hidden(0,1,0) 而露出狩獵圖 */
+        #battle-view.area-fit #mob-list { height: auto; aspect-ratio: 1920 / 580; max-height: 100%; }   /* 🎯 怪物站立帶＝還原原始條狀比例(1920/580·與框加大前一致)→怪物大小/前後排景深/特效命中位置全部對回；超高框時 max-height 夾住、其餘高度留給背景 */
+        #battle-view.area-fit #mob-list:has(.boss-slot) { height: 100%; aspect-ratio: auto; }   /* 🐉 龍窟頭目(boss-slot)維持填滿整框大圖、不套站立帶 */
+        /* 🎯 v2.4.85 五怪「2 排站位」：框夠高→下排 3 隻(前排·較大·靠下)＋上排 2 隻(後排·略小·靠上)，各約佔背景一半高、吃滿整框。
+           DOM 順序固定＝[front0, back3, front1, back4, front2]＝nth-child 1..5(見 js/09 _order)；3 格地圖(龍窟/攻城/裂痕)無 .mob-back→不套此 grid、維持單排站立帶。 */
+        #battle-view.area-fit #mob-list:has(.mob-back) { display: grid; grid-template-columns: repeat(6, 1fr); grid-template-rows: 1fr 1fr; height: 100%; aspect-ratio: auto; max-height: 100%; gap: 0; align-items: stretch; }
+        #battle-view.area-fit #mob-list:has(.mob-back) > .mob-front:nth-child(1) { grid-area: 2 / 1 / 3 / 3; }   /* 下排左 */
+        #battle-view.area-fit #mob-list:has(.mob-back) > .mob-back:nth-child(2)  { grid-area: 1 / 2 / 2 / 4; }   /* 上排左(錯位於下排空隙上方) */
+        #battle-view.area-fit #mob-list:has(.mob-back) > .mob-front:nth-child(3) { grid-area: 2 / 3 / 3 / 5; }   /* 下排中 */
+        #battle-view.area-fit #mob-list:has(.mob-back) > .mob-back:nth-child(4)  { grid-area: 1 / 4 / 2 / 6; }   /* 上排右 */
+        #battle-view.area-fit #mob-list:has(.mob-back) > .mob-front:nth-child(5) { grid-area: 2 / 5 / 3 / 7; }   /* 下排右 */
+        /* 2 排景深＋放大到各約佔背景一半高(怪圖自腳底往上長·transform-origin:bottom)：下排(前排)較大、上排(後排)略小；再乘 --jit-scale(每隻 0.88~1.12·見 js/09 _mobScatter)做隨機大小變化 */
+        #battle-view.area-fit #mob-list:has(.mob-back) .mob-back .mob-img-inner { transform: scale(calc(1.25 * var(--jit-scale, 1))); transform-origin: bottom center; }
+        #battle-view.area-fit #mob-list:has(.mob-back) .mob-front:not(.boss-zoom) .mob-img-inner { transform: scale(calc(1.5 * var(--jit-scale, 1))); transform-origin: bottom center; }
+        /* 單排站立帶(3 格地圖·無 .mob-back)非頭目怪：套隨機大小變化(位置散佈由 .mob-target 的 inline transform 負責) */
+        #battle-view.area-fit #mob-list:not(:has(.mob-back)) .mob-target:not(.boss-slot):not(.boss-zoom) .mob-img-inner { transform: scale(var(--jit-scale, 1)); transform-origin: bottom center; }
         #battle-view.area-fit .mob-target { height: 100%; min-height: 0; }
         #battle-view.area-fit .mob-target > div:not(.mob-img-wrap) { flex-shrink: 0; }   /* 🔧 固定列(名稱/徽章/狀態/血條)不可壓縮：大型怪圖的 intrinsic 高度會撐大 band 的 flex-basis→整欄溢出→所有列等比縮小致徽章/狀態字被切半；改由 mob-img-wrap 獨自吸收伸縮 */
         #battle-view.area-fit .mob-img-wrap { flex: 1 1 auto; min-height: 0; align-items: flex-end; }   /* 🦶 怪物圖貼齊框底(腳齊底)，供腳下接觸陰影對齊 */
         #battle-view.area-fit .mob-img-inner { position: relative; height: 100%; display: inline-flex; align-items: flex-end; justify-content: center; }   /* 內層 inline-flex 縮到圖寬→影子寬度跟著每隻怪縮放 */
-        #battle-view.area-fit .mob-img-wrap img { height: 100%; width: auto; max-width: 100%; max-height: 100%; position: relative; z-index: 1; }
+        #battle-view.area-fit .mob-img-wrap img { height: 100%; width: auto; max-width: 100%; max-height: 100%; object-fit: contain; object-position: center bottom; position: relative; z-index: 1; }   /* 🖥️ object-fit:contain+底部對齊→戰鬥框加高後怪物圖維持原比例(不再被拉長)、且腳貼底(影子對齊) */
         /* 🙈 怪物名字預設隱藏，滑鼠游標移到「怪物圖片」上才顯示（:has 偵測圖片區 hover；img 為 pointer-events:none→hover 落在 .mob-img-wrap；保留名稱列空間避免版面跳動）。.name-show＝JS 依 _hoverMobUid 套用→跨重繪持續顯示(每 tick 換 innerHTML 時 :hover 會瞬失效，靠它穩住不閃) */
         #battle-view .mob-name { opacity: 0; transition: opacity 0.12s ease; }
         #battle-view .mob-target:has(.mob-img-wrap:hover) .mob-name,
@@ -345,6 +371,9 @@
             100% { opacity: 0; transform: translate(-50%,-235%) scale(1); }
         }
         .vfx-particle { position: absolute; border-radius: 50%; transform: translate(-50%,-50%); will-change: transform,opacity; }
+        /* ✨ 怪物死亡：衝擊波環 + 白閃殘影（vfxKill 以 element.animate 驅動·邊框色/尺寸由 JS 內聯指定） */
+        .vfx-killring { position: absolute; border-radius: 50%; transform: translate(-50%,-50%); border: 4px solid #ff8a5c; pointer-events: none; will-change: transform,opacity; }
+        .vfx-ghost { position: absolute; transform: translate(-50%,-50%); object-fit: contain; pointer-events: none; will-change: transform,opacity,filter; }
         @keyframes vfxShake {
             0%,100% { transform: translate(0,0); }
             15% { transform: translate(-5px,3px); }   30% { transform: translate(5px,-3px); }
@@ -379,3 +408,20 @@
 .c-card-silver { color: #f8fafc; text-shadow: 0 0 5px #cbd5e1; }
 .c-card-gold   { color: #fcd34d; text-shadow: 0 0 7px #f59e0b; }
 .card-silhouette { filter: brightness(0) saturate(0); opacity: .55; }
+
+/* ===== 🖥️ 1920×1080 固定設計舞台 + 版面比例（戰鬥/村莊最大化、日誌約佔 1/3~1/2） ===== */
+/* 🖥️ v2.5.8 改：流動式版面（填滿整個視窗、元素自然撐開）——移除固定 1920×1080 舞台與 transform 縮放。
+   舞台直接 position:fixed;inset:0 填滿視窗；內層 #game-screen(absolute inset:0) 與三欄 flex(左 340 / 中 flex-1 / 右 380)隨視窗大小自然伸縮，無 letterbox、無縮放。
+   VFX/提示/游標光點掛在 body（舞台外）→ getBoundingClientRect 取真實視窗座標，定位天生相容、不需改 VFX。fitStage() 已改為清空殘留 transform 的 no-op。 */
+#app-stage { position: fixed; inset: 0; }
+#game-screen { position: absolute; inset: 0; padding: 16px; }   /* 吃滿整個舞台（取代舊 max-w-[1600px] 置中→改用滿版 1920） */
+/* 中央欄：地圖/戰鬥面板吃滿剩餘高度（最大化戰鬥與村莊畫面）；兩個日誌改「並排一列」(戰鬥日誌左、系統日誌右)、各佔一半寬 */
+#map-view-panel { flex: 1 1 0; min-height: 0; }
+#log-row { flex: 0 0 340px; min-height: 0; }   /* 日誌列固定高度(並排)；其餘高度全給地圖/戰鬥面板 */
+#combat-log-panel { flex: 1 1 0; min-width: 0; min-height: 0; }   /* 左半·覆寫原 .flex-1(原垂直堆疊) */
+#syslog-panel { flex: 1 1 0; height: auto; min-width: 0; min-height: 0; }   /* 右半·覆寫原 h-1/3 */
+/* 戰鬥框填滿地圖面板（村莊 town-view 已 flex-1 自動吃滿）；area-fit 怪物 height:100% 隨之等比放大 */
+#battle-view { flex: 1 1 auto; min-height: 0; }
+/* 非 area-fit（攻城/裂痕/無背景圖）：怪物列維持原尺寸但於放大的框內垂直置中、不留上下空白。
+   ⚠️ 必須排除 .hidden→否則 display:flex 會蓋掉 .hidden(display:none)，使村莊時隱藏的戰鬥框仍佔位、把 town-view 擠扁 */
+#battle-view:not(.area-fit):not(.hidden) { display: flex; align-items: center; justify-content: center; }

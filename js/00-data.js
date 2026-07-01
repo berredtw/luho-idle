@@ -1,6 +1,6 @@
 /** 遊戲核心資料庫 */
 // 🏷️ 遊戲版本號（顯示於登入頁面下方·單一真相來源）：更新版本時只改這一行，登入頁面自動同步。
-const GAME_VERSION = 'v2.4.22';
+const GAME_VERSION = 'v2.6.1';
 // ===== 💾 存檔壓縮（LZString compressToUTF16/decompressFromUTF16·MIT, Pieroxy）：localStorage 內部以 UTF-16 壓縮，省 ~89%，繞過 5MB 上限 =====
 //  ⚠️ 只壓 localStorage（存檔位/倉庫/共用桶/_bak）；匯出檔維持明文 JSON（可攜·importSave 用 JSON.parse 驗證）。_lzGet 相容舊明文存檔（無 'LZ1:' 前綴→原樣回傳）。
 var LZString = (function () {
@@ -92,14 +92,39 @@ var LZString = (function () {
   };
   return LZString;
 })();
-// 壓縮寫入：把 JSON 字串以 'LZ1:'+UTF16 壓縮存入；壓縮失敗或 quota 時退回明文（再不行則警告）
+// ===== 🗄️ 統一儲存層（單一切換點：打包版檔案存檔 vs 網頁版 localStorage）=====
+//   打包版(Electron)：preload.js 注入 window.fableStore（後端＝exe 同層 userdata/filestore 的真實檔案），
+//     容量只受硬碟限制，徹底繞過 Chromium localStorage ~5–10MB 配額（5000 格倉庫等大量資料不會寫不進去）。
+//   網頁版/file://：無 fableStore → 退回 localStorage，行為與舊版完全一致。
+//   所有持久化(存檔位/倉庫/圖鑑桶/_bak)都改走 _lsGet/_lsSet/_lsRemove。
+var _FS = (typeof window !== 'undefined' && window.fableStore) ? window.fableStore : null;
+// 🖥️ 打包版標記：在 <html> 加 .pkg-build → 套用打包專屬樣式（如下拉清單選項間隔加大·見 css/style.css）。網頁版(無 fableStore)不加→維持原樣。
+try { if (_FS && typeof document !== 'undefined' && document.documentElement) document.documentElement.classList.add('pkg-build'); } catch (e) {}
+function _lsGet(k) { try { return _FS ? _FS.get(k) : localStorage.getItem(k); } catch (e) { return null; } }
+function _lsSet(k, v) { try { if (_FS) return _FS.set(k, v); localStorage.setItem(k, v); return true; } catch (e) { return false; } }
+function _lsRemove(k) { try { if (_FS) { _FS.remove(k); return; } localStorage.removeItem(k); } catch (e) {} }
+// 一次性遷移：打包版首次啟用檔案存檔時，把舊版存在 Chromium localStorage(userdata/Local Storage)的所有資料複製進檔案存檔，避免玩家存檔「消失」。
+(function _migrateToFileStore() {
+  try {
+    if (!_FS || _FS.has('__fs_migrated_v1')) return;
+    if (typeof localStorage !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i++) { let k = localStorage.key(i); if (k && !_FS.has(k)) { let v = localStorage.getItem(k); if (v != null) _FS.set(k, v); } }
+    }
+    _FS.set('__fs_migrated_v1', '1');
+  } catch (e) {}
+})();
+// 壓縮寫入：把 JSON 字串以 'LZ1:'+UTF16 壓縮存入；壓縮或寫入失敗(多半 localStorage 配額)時退回明文（再不行才警告）
 function _lzSet(key, jsonStr) {
-  try { localStorage.setItem(key, 'LZ1:' + LZString.compressToUTF16(jsonStr)); return true; }
-  catch (e) { try { localStorage.setItem(key, jsonStr); return true; } catch (e2) { if (typeof logSys === 'function') logSys('<span class="text-red-400 font-bold">⚠ 瀏覽器儲存空間不足，存檔可能未完整寫入。</span>'); return false; } }
+  var packed = null;
+  try { packed = 'LZ1:' + LZString.compressToUTF16(jsonStr); } catch (e) { packed = null; }
+  if (packed != null && _lsSet(key, packed)) return true;
+  if (_lsSet(key, jsonStr)) return true;   // 退明文（壓縮失敗或寫入失敗）
+  if (typeof logSys === 'function') logSys('<span class="text-red-400 font-bold">⚠ 儲存空間不足，存檔可能未完整寫入。</span>');
+  return false;
 }
 // 解壓讀取：'LZ1:' 前綴→解壓；否則原樣回傳（相容舊明文存檔）。回傳 JSON 字串或 null（key 不存在）
 function _lzGet(key) {
-  var raw = localStorage.getItem(key); if (raw == null) return null;
+  var raw = _lsGet(key); if (raw == null) return null;
   if (raw.slice(0, 4) === 'LZ1:') { try { return LZString.decompressFromUTF16(raw.slice(4)); } catch (e) { return null; } }
   return raw;
 }
@@ -118,21 +143,13 @@ function _seededFloat(str) {
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
-// 強化專用決定論亂數：由（角色 player.enSeed＋裝備 uid＋當前強化值[＋標籤]）決定 0~1 的值。
-// 三項輸入全在存檔內 → 匯出/讀檔/匯入舊檔回到強化前，輸入全部還原 → 算出一模一樣的成敗，save/load 刷不到。
-function enRandomUid(itUid, en, tag) {
-  let seed = (typeof player !== 'undefined' && player && player.enSeed) || 'nseed';
-  return _seededFloat(seed + '|' + itUid + '|' + (Number(en) || 0) + '|' + (tag || ''));
-}
-// 🔁 強化身份 uid：詛咒卷軸退階後，裝備被賦予一個「由存檔內計數器 player.enReSeq 決定的新身份」(item.enNonce)，
-//    使重新爬階時各階成敗重置（＝付費重骰該階）。仍 committed：enNonce 取自存檔計數器→讀檔/匯入重現同值→不能 save/load 刷；
-//    只有「再花一張詛咒卷軸」(enNonce 換新)才換命運。未退階過的裝備 enNonce 為空→沿用 uid（既有裝備命運不變·向後相容）。
-function enIdUid(item) { return (item && item.enNonce) ? ('re' + item.enNonce) : (item && item.uid); }
-function enRandom(item, tag) { return enRandomUid(enIdUid(item), item && item.en, tag); }
+// 🎲 強化成敗＝即時 Math.random()（每次嘗試獨立擲骰）：2026-06 用戶要求改回純機率
+//    （「物品強化值由種子預先決定」違背賭博本意）。強化已不再走 committed RNG，可被 save/load 重抽。
+//    player.enSeed 改僅供 lootRng（掉落）與娃娃 _dollRng 使用，與強化無關。
 
 // 🎲 「獲得/抽取瞬間」決定論亂數（committed RNG·防 SL 存讀檔重抽）：把掉落/製作/兌換/潘朵拉/開箱/裂痕領取/碧恩賦予 等
 //   在行動當下擲出、且會 baked 進存檔的隨機（自帶強化值／詞綴／席琳套裝效果／抽到哪一件…）改由「存檔內遞增序號 player.lootSeq」決定。
-//   序號入存檔且受 SIG1 簽章 → 讀檔或重匯入舊檔回到行動前 → 相同序號 → 算出完全相同結果 → 重抽無效。比照娃娃 dollSeq、強化 enRandom。
+//   序號入存檔且受 SIG1 簽章 → 讀檔或重匯入舊檔回到行動前 → 相同序號 → 算出完全相同結果 → 重抽無效。比照娃娃 dollSeq。
 //   ⚠️標題/載入畫面（尚無 player）退回 Math.random（該情境無存檔可 SL，不影響玩家）。每呼叫一次消耗一個序號。
 function lootRng(tag) {
     if (typeof player === 'undefined' || !player) return Math.random();
@@ -272,6 +289,12 @@ const DB = {
         // ===== 傳說單手劍：附帶魔法施放特效（spellProc，不需學會技能、必中、受魔法傷害影響） =====
         "wpn_dk_flameblade": { n: "死亡騎士的烈炎之劍", type: "wpn", dmgS: 16, dmgL: 10, hit: 5, dmgBonus: 2, spd: 1.0, req: "knight", safe: 6, p: 152000, legend: true, gachaWeight: 1, spellProc: { skn: "地獄火", dice: [1, 60], ele: "fire", aoe: true }, procRateBase: 3, procRatePerEn: 1, d: "死亡騎士緊握至死的劍，劍刃終年燃著不滅的地獄業火。<br>3%機率額外施放地獄火，每+1發動機率增加1%。地獄火：對敵方全體造成相當於裂炎術的火屬性魔法傷害。" },
         "wpn_kurt_sword":    { n: "克特之劍", type: "wpn", dmgS: 15, dmgL: 11, hit: 9, dmgBonus: 5, spd: 1.0, req: "knight,elf", safe: 6, p: 152000, legend: true, gachaWeight: 1, spellProc: { skn: "極道落雷", dice: [6, 8], ele: "wind" }, procRateBase: 15, procRatePerEn: 1, d: "克特之劍，劍鋒間遊走著被馴服的雷霆。<br>15%機率額外施放極道落雷，每+1發動機率增加1%。" },
+        // ===== ⚡ 元素施放傳說武器（spellProc·攻擊1%+每強化1%觸發·必中·受魔法傷害影響·不吃法師階級加成） =====
+        "wpn_thor_hammer":   { n: "雷神之鎚", type: "wpn", dmgS: 7, dmgL: 12, hit: 3, dmgBonus: 0, spd: 1.1, req: "royal,knight,elf,mage,warrior", safe: 6, p: 46000, legend: true, gachaWeight: 1, ignHardSkin: true, spellProc: { skn: "電光衝擊", dice: [5, 5], flat: 5, ele: "wind", status: { kind: "stun", pct: 5, dur: 3 } }, procRateBase: 1, procRatePerEn: 1, d: "雷神遺落的戰鎚，鎚頭間纏繞著未平息的雷霆。<br>鈍擊；貫穿（無視硬皮額外減傷）；近距離命中+3。<br>攻擊時 1%（每強化 +1%）機率發動電光衝擊：造成基礎 5D5+5 的風屬性單體魔法傷害，並有 5% 固定機率使目標暈眩。" },
+        "wpn_pagrio_wrath":  { n: "帕格里奧之怒", type: "wpn", dmgS: 13, dmgL: 9, hit: 2, dmgBonus: 2, spd: 1.0, req: "royal,knight,elf", safe: 6, p: 56000, legend: true, gachaWeight: 1, ignHardSkin: true, spellProc: { skn: "火焰之陣", dice: [6, 6], flat: 6, ele: "fire", aoe: true }, procRateBase: 1, procRatePerEn: 1, d: "帕格里奧之怒，劍身灼燒著永不熄滅的怒火。<br>反擊；貫穿（無視硬皮額外減傷）；近距離傷害+2、近距離命中+2。<br>攻擊時 1%（每強化 +1%）機率發動火焰之陣：對敵方全體造成基礎 6D6+6 的火屬性魔法傷害。" },
+        "wpn_mapler_punish": { n: "馬普勒的懲罰", type: "wpn", w2h: true, dmgS: 14, dmgL: 15, hit: 0, dmgBonus: 11, spd: 0.9, req: "royal,knight,elf,warrior", safe: 6, p: 46000, legend: true, gachaWeight: 1, eff: "crush", ignHardSkin: true, spellProc: { skn: "震裂術", dice: [4, 11], ele: "earth", aoe: true }, procRateBase: 1, procRatePerEn: 1, d: "馬普勒降下的懲戒之鎚，每一擊都撼動大地。<br>重擊；貫穿（無視硬皮額外減傷）；近距離傷害+11。<br>攻擊時 1%（每強化 +1%）機率發動震裂術：對敵方全體造成等同法師震裂術的土屬性魔法傷害（不吃法師階級加成）。" },
+        "wpn_osis_hammer":   { n: "歐西斯衝撞錘", type: "wpn", dmgS: 8, dmgL: 9, hit: 3, dmgBonus: 0, spd: 1.1, req: "royal,knight,warrior", safe: 6, p: 66000, legend: true, gachaWeight: 1, ignHardSkin: true, spellProc: { skn: "流星雨", dice: [6, 10], ele: "fire", aoe: true }, procRateBase: 1, procRatePerEn: 1, d: "歐西斯鍛造的衝撞之錘，揮動之間天降流火。<br>鈍擊；貫穿（無視硬皮額外減傷）；近距離命中+3。<br>攻擊時 1%（每強化 +1%）機率發動流星雨：對敵方全體造成等同法師流星雨的火屬性魔法傷害（不吃法師階級加成）。" },
+        "wpn_eva_scold":     { n: "伊娃的責罵", type: "wpn", dmgS: 9, dmgL: 9, hit: 1, dmgBonus: 1, spd: 1.0, req: "royal,knight,elf,mage,dark,dragon,illusion", safe: 6, p: 56400, legend: true, gachaWeight: 1, ignHardSkin: true, spellProc: { skn: "水之矛", dice: [5, 5], flat: 5, ele: "water", status: { kind: "freeze", pct: 5, dur: 4 } }, procRateBase: 1, procRatePerEn: 1, d: "伊娃的責罵，劍鋒凝著沁骨的寒泉。<br>反擊；貫穿（無視硬皮額外減傷）；近距離傷害+1、近距離命中+1。<br>攻擊時 1%（每強化 +1%）機率發動水之矛：造成基礎 5D5+5 的水屬性單體魔法傷害，並有 5% 固定機率使目標冰凍。" },
         // ===== 軍王之室：掉落裝備 =====
         "wpn_assassin_mark": { n: "暗殺軍王之痕", type: "wpn", w2h: true, dmgS: 13, dmgL: 13, hit: 0, dmgBonus: 2, spd: 0.7, req: "dark", safe: 6, p: 25000, eff: "combo", gachaWeight: 10 },   // 雙刀・連擊
         "wpn_priest_wand":   { n: "神官魔杖", type: "wpn", w2h: true, dmgS: 9, dmgL: 9, hit: 0, spd: 1.0, req: "mage", safe: 6, p: 13340, unBonus: true, eff: "magicburst", gachaWeight: 10, d: "神官祈禱經年的法杖，能將信仰化為爆裂的魔力。<br>魔爆：施放單體傷害魔法時 智力/100、全體傷害魔法時 智力/60 機率引發魔法能力爆炸，對所有敵人額外造成該次魔法傷害 30% 的無屬性傷害。" },
@@ -375,14 +398,12 @@ const DB = {
         "hlm_dk": { n: "死亡騎士頭盔", legend: true, type: "arm", slot: "helm", ac: 3, req: "knight", safe: 4, p: 36000, gachaWeight: 1, d: "死亡騎士頭盔，殘存的怨念在頭盔深處幽幽燃燒。死亡騎士套裝之一。<br>【死亡騎士套裝】4 件齊：AC-4、變身「真‧死亡騎士」（額外傷害+6、額外命中+6、攻速+35%）。" },
         "arm_50": { n: "精靈敏捷頭盔", type: "arm", slot: "helm", ac: 1, req: "elf", safe: 6, p: 4800, dex: 1, gachaWeight: 20 },
         "arm_51": { n: "精靈體質頭盔", type: "arm", slot: "helm", ac: 1, req: "elf", safe: 6, p: 4800, con: 1, gachaWeight: 20 },
-        "arm_52": { n: "騎士頭巾", type: "arm", slot: "helm", ac: 1, req: "knight", p: 1, gachaWeight: 0 },
         "arm_53": { n: "紅騎士頭巾", type: "arm", slot: "helm", ac: 2, req: "knight", safe: 6, p: 6500, gachaWeight: 20 },
         "arm_54": { n: "巴土瑟之帽", legend: true, type: "arm", slot: "helm", ac: 2, req: "mage", safe: 4, p: 23500, mpR: 5, gachaWeight: 1 },
         "arm_55": { n: "卡士柏之帽", legend: true, type: "arm", slot: "helm", ac: 2, req: "mage", safe: 4, p: 23500, mmp: 25, gachaWeight: 1 },
         "arm_56": { n: "馬庫爾之帽", legend: true, type: "arm", slot: "helm", ac: 2, req: "mage", safe: 4, p: 23500, int: 1, gachaWeight: 1 },
         "arm_57": { n: "西瑪之帽", legend: true, type: "arm", slot: "helm", ac: 2, req: "mage", safe: 4, p: 23500, mmp: 15, mpR: 2, gachaWeight: 1 },
         "hlm_kurt": { n: "克特頭盔", legend: true, type: "arm", slot: "helm", ac: 3, req: "knight", safe: 4, p: 32000, gachaWeight: 1, d: "曾屬於墮落者克特的頭盔，盔影下不見生人氣息。克特套裝之一。<br>【克特套裝】4 件齊：AC-4、變身「真‧克特」（額外傷害+4、額外命中+8、攻速+35%）。" },
-        "arm_58": { n: "淨化頭飾", type: "arm", slot: "helm", ac: 0, req: "elf", p: 1, gachaWeight: 0 },
         "amr_plate": { n: "金屬盔甲", type: "arm", slot: "armor", ac: 7, req: "knight", safe: 4, p: 51800, gachaWeight: 30 },
         "arm_59": { n: "水晶盔甲", type: "arm", slot: "armor", ac: 8, req: "knight", safe: 4, p: 48000, gachaWeight: 20 },   // 🔧 由 惡魔(10%)／密密(0.1%)／黑暗復仇者(0.1%) 掉落；潘朵拉權重 20（進黑市/血盟野外抽獎池）
         "arm_60": { n: "青銅盔甲", type: "arm", slot: "armor", ac: 6, req: "knight", safe: 4, p: 22400, gachaWeight: 50 },
@@ -474,7 +495,6 @@ const DB = {
         "shd_bone": { n: "骷髏盾牌", type: "arm", slot: "shield", ac: 3, req: "all", safe: 0, p: 255, gachaWeight: 100, block: 30 },
 		"shd_redknight": { n: "紅騎士盾牌", type: "arm", slot: "shield", ac: 2, req: "knight", safe: 6, p: 9800, immStone: true, magicDrNonEle: 20, d: "紅騎士團傳承的戰盾，染血的盾面磨礪出抗魔的韌性。受到無屬性魔法傷害時減少 20%。", gachaWeight: 20, block: 50 },
         "arm_113": { n: "鋼鐵盾牌", type: "arm", slot: "shield", ac: 3, req: "knight", safe: 4, p: 16500, gachaWeight: 20, block: 60 },
-        "arm_114": { n: "受詛咒的魔法書", type: "arm", slot: "shield", ac: 1, req: "mage", p: 1, gachaWeight: 0, block: 10 },
         "arm_115": { n: "魔法能量之書", type: "arm", slot: "shield", ac: 2, req: "mage", safe: 4, p: 9800, int: 1, gachaWeight: 20, block: 10 },
         "acc_116": { n: "傳送控制戒指", type: "acc", slot: "ring", ac: 0, req: "all", safe: 0, p: 150000, gachaWeight: 1, unique: true, d: "刻著古老座標的戒指，撕裂空間之餘總會引來潛伏的強敵。攜帶在背包即可生效（無需裝備）：手動施放傳送術/使用瞬移卷軸時必定遭遇 BOSS。" },
         "acc_117": { n: "變形控制戒指", type: "acc", slot: "ring", ac: 0, req: "all", safe: 0, p: 150000, gachaWeight: 1, unique: true, d: "嵌著變幻紋路的戒指，讓施術者得以主宰自身形貌的流轉。攜帶在背包即可生效（無需裝備）：使用變形卷軸時可指定變身型態。" },
@@ -659,11 +679,12 @@ const DB = {
         "doll_莫提斯":     { n: "魔法娃娃：莫提斯", type: "acc", slot: "doll", req: "all", safe: 0, p: 0, doll: true, dollTier: 4, noEnhance: true, gachaWeight: 0, c: "text-purple-300", mpR: 2, expBonus: 10, goldBonus: 10, weightCap: 80, d: "四階魔法娃娃。MP自然恢復+2、獲得經驗+10%、獲得金錢+10%、負重+80。裝於魔法娃娃欄，游標變其模樣。" },
         "doll_黑長者":     { n: "魔法娃娃：黑長者", type: "acc", slot: "doll", req: "all", safe: 0, p: 0, doll: true, dollTier: 4, noEnhance: true, gachaWeight: 0, c: "text-purple-300", mpR: 10, int: 2, wis: 2, d: "四階魔法娃娃。MP自然恢復+10、智力+2、精神+2。裝於魔法娃娃欄，游標變其模樣。" },
         "doll_獨眼巨人":   { n: "魔法娃娃：獨眼巨人", type: "acc", slot: "doll", req: "all", safe: 0, p: 0, doll: true, dollTier: 4, noEnhance: true, gachaWeight: 0, c: "text-purple-300", hpR: 30, str: 2, con: 2, d: "四階魔法娃娃。HP自然恢復+30、力量+2、體質+2。裝於魔法娃娃欄，游標變其模樣。" },
+        "doll_雪人":       { n: "魔法娃娃：雪人", type: "acc", slot: "doll", req: "all", safe: 0, p: 0, doll: true, dollTier: 4, noEnhance: true, gachaWeight: 0, c: "text-purple-300", potionBonus: 10, mhp: 50, mmp: 30, d: "四階魔法娃娃。藥水恢復量+10%、HP+50、MP+30。裝於魔法娃娃欄，游標變其模樣。" },
         "doll_艾莉絲":     { n: "魔法娃娃：艾莉絲", type: "acc", slot: "doll", req: "all", safe: 0, p: 0, doll: true, dollTier: 5, noEnhance: true, gachaWeight: 0, c: "text-orange-300", mpR: 5, rangedDmg: 4, rangedHit: 3, d: "五階魔法娃娃。MP自然恢復+5、遠距離傷害+4、遠距離命中+3。裝於魔法娃娃欄，游標變其模樣。" },
         "doll_木乃伊王":   { n: "魔法娃娃：木乃伊王", type: "acc", slot: "doll", req: "all", safe: 0, p: 0, doll: true, dollTier: 5, noEnhance: true, gachaWeight: 0, c: "text-orange-300", hpR: 20, mhp: 150, d: "五階魔法娃娃。HP自然恢復+20、HP+150。裝於魔法娃娃欄，游標變其模樣。" },
         "doll_死亡騎士":   { n: "魔法娃娃：死亡騎士", type: "acc", slot: "doll", req: "all", safe: 0, p: 0, doll: true, dollTier: 5, noEnhance: true, gachaWeight: 0, c: "text-orange-300", hpR: 15, meleeDmg: 5, procSkill: "sk_blaze", procRateBase: 1, d: "五階魔法娃娃。HP自然恢復+15、近距離傷害+5；一般攻擊命中 1% 機率觸發烈炎術。裝於魔法娃娃欄，游標變其模樣。" },
         "doll_巴風特":     { n: "魔法娃娃：巴風特", type: "acc", slot: "doll", req: "all", safe: 0, p: 0, doll: true, dollTier: 5, noEnhance: true, gachaWeight: 0, c: "text-orange-300", mpR: 3, mdmg: 1, magicHit: 1, procSkill: "sk_earthquake", procRateBase: 1, d: "五階魔法娃娃。MP自然恢復+3、魔法傷害+1、魔法命中+1；一般攻擊命中 1% 機率觸發地裂術。裝於魔法娃娃欄，游標變其模樣。" },
-        "doll_吸血鬼":     { n: "魔法娃娃：吸血鬼", type: "acc", slot: "doll", req: "all", safe: 0, p: 0, doll: true, dollTier: 5, noEnhance: true, gachaWeight: 0, c: "text-orange-300", hpR: 35, potionBonus: 10, er: 5, dr: 2, d: "五階魔法娃娃。HP自然恢復+35、藥水恢復量+10%、ER+5、傷害減免+2。裝於魔法娃娃欄，游標變其模樣。" },
+        "doll_吸血鬼":     { n: "魔法娃娃：吸血鬼", type: "acc", slot: "doll", req: "all", safe: 0, p: 0, doll: true, dollTier: 5, noEnhance: true, gachaWeight: 0, c: "text-orange-300", hpR: 35, potionBonus: 15, er: 5, dr: 3, d: "五階魔法娃娃。HP自然恢復+35、藥水恢復量+15%、ER+5、傷害減免+3。裝於魔法娃娃欄，游標變其模樣。" },
         "doll_克特":       { n: "魔法娃娃：克特", type: "acc", slot: "doll", req: "all", safe: 0, p: 0, doll: true, dollTier: 5, noEnhance: true, gachaWeight: 0, c: "text-orange-300", extraHit: 3, ac: 2, procSkill: "sk_thunder", procRateBase: 1, d: "五階魔法娃娃。額外命中+3、AC-2；一般攻擊命中 1% 機率觸發極道落雷。裝於魔法娃娃欄，游標變其模樣。" },
         "doll_冰之女王":   { n: "魔法娃娃：冰之女王", type: "acc", slot: "doll", req: "all", safe: 0, p: 0, doll: true, dollTier: 5, noEnhance: true, gachaWeight: 0, c: "text-orange-300", mpR: 10, int: 2, wis: 2, resWater: 10, d: "五階魔法娃娃。MP自然恢復+10、智力+2、精神+2、冰屬性抗性+10。裝於魔法娃娃欄，游標變其模樣。" },
         "doll_巴蘭卡":     { n: "魔法娃娃：巴蘭卡", type: "acc", slot: "doll", req: "all", safe: 0, p: 0, doll: true, dollTier: 5, noEnhance: true, gachaWeight: 0, c: "text-orange-300", meleeDmg: 3, meleeHit: 3, dr: 3, d: "五階魔法娃娃。近距離傷害+3、近距離命中+3、傷害減免+3。裝於魔法娃娃欄，游標變其模樣。" },
@@ -999,8 +1020,8 @@ const DB = {
         // ===== 🏛️ 古代/古老裝備（威頓村 客盧亞 製作）=====
         "armguard_archer": { n: "古代神射臂甲", type: "arm", slot: "shield", ac: 0, mhp: 80, req: "all", safe: 0, p: 100000, gachaWeight: 0, armguard: { stat: "rangedDmg", base: 1, th: [1, 2, 3] }, d: "古代神射手綁縛拉弦之臂的護甲，仍留有他百步穿楊的氣度（裝於副手，可與雙手武器並用）。HP+80、遠距離傷害+1；強化達 +5/+7/+9 時遠距離傷害改為 +2/+3/+4（取最高階、非累加）。每強化+1，HP+10。" },
         "armguard_fighter": { n: "古代鬥士臂甲", type: "arm", slot: "shield", ac: 0, resFire: 5, resWater: 5, resEarth: 5, resWind: 5, req: "all", safe: 0, p: 100000, gachaWeight: 0, armguard: { stat: "meleeDmg", base: 1, th: [1, 2, 3] }, d: "古代競技場鬥士磨礪近身搏殺的臂甲，刻滿了無數場生死搏鬥的痕跡（裝於副手，可與雙手武器並用）。全屬性抗性+5、近距離傷害+1；強化達 +5/+7/+9 時近距離傷害改為 +2/+3/+4（取最高階、非累加）。每強化+1，HP+10。" },
-        "wpn_old_sword": { n: "古老的劍", type: "wpn", dmgS: 35, dmgL: 20, hit: 5, dmgBonus: 0, spd: 1.0, req: "knight,elf,dark", safe: 0, p: 15000, gachaWeight: 0, noEnhance: true, finalMult: 1.5, d: "塵封已久的古代單手劍，劍身雖舊，鋒芒卻不減當年。反擊、居合、最終傷害×1.5；無法強化。" },
-        "wpn_old_greatsword": { n: "古老的巨劍", type: "wpn", w2h: true, dmgS: 27, dmgL: 45, hit: 3, dmgBonus: 3, spd: 0.8, req: "knight", safe: 0, p: 15000, gachaWeight: 0, eff: "cleave", noEnhance: true, finalMult: 1.5, d: "古老戰場上遺落的雙手巨劍，沉甸甸的劍身仍能一掃千軍。切割、最終傷害×1.5；無法強化。" },
+        "wpn_old_sword": { n: "古老的劍", type: "wpn", dmgS: 35, dmgL: 20, hit: 5, dmgBonus: 0, spd: 1.0, req: "knight,elf,dark", safe: 0, p: 15000, gachaWeight: 0, noEnhance: true, finalMult: 2, d: "塵封已久的古代單手劍，劍身雖舊，鋒芒卻不減當年。反擊、居合、最終傷害×2；無法強化。" },
+        "wpn_old_greatsword": { n: "古老的巨劍", type: "wpn", w2h: true, dmgS: 27, dmgL: 45, hit: 3, dmgBonus: 3, spd: 0.8, req: "knight", safe: 0, p: 15000, gachaWeight: 0, eff: "cleave", noEnhance: true, finalMult: 2, d: "古老戰場上遺落的雙手巨劍，沉甸甸的劍身仍能一掃千軍。切割、最終傷害×2；無法強化。" },
         "wpn_old_xbow": { n: "古老的弩槍", type: "wpn", isBow: true, ranged: true, oneHand: true, rapidfire: 90, dmgS: 3, dmgL: 3, hit: 5, dmgBonus: 2, spd: 0.9, req: "elf,dark", safe: 6, p: 15000, gachaWeight: 0, d: "古代工匠巧製的單手弩槍，是有史以來第一把可單手持握的弓。連射90%；可同時裝備盾牌或臂甲。" },
         "wpn_ancient_spear": { n: "古代神之槍", type: "wpn", w2h: true, legend: true, dmgS: 27, dmgL: 30, hit: 3, dmgBonus: 5, spd: 1.0, req: "knight", safe: 6, p: 465000, gachaWeight: 0, eff: "pierce", pierceChance: 90, d: "傳說由古代神祇親手持握的雙手神槍，槍尖所向無可阻擋。穿透90%。" },
         "wpn_ancient_axe": { n: "古代神之斧", type: "wpn", legend: true, dmgS: 25, dmgL: 28, hit: 3, dmgBonus: 8, spd: 1.2, req: "warrior", safe: 6, p: 465000, gachaWeight: 0, d: "古代神祇腰間配掛的單手神斧，劈下時連神明也為之低首。鈍擊。" },
@@ -2129,7 +2150,7 @@ const DB = {
         "sk_elf_windshot": { n: "風之神射", type: "buff", tier: 3, reqE: 30, mp: 15, dur: 1200, reqEle: "wind", d: { rangedHit: 5 } },
         "sk_elf_winddash": { n: "風之疾走", type: "buff", tier: 3, reqE: 30, mp: 20, dur: 1200, reqEle: "wind", d: { er: 10 } },
         "sk_elf_earthguard": { n: "大地防護", type: "buff", tier: 3, reqE: 30, mp: 15, dur: 1200, reqEle: "earth", d: { ac: 4 } },
-        "sk_elf_groundtrap": { n: "地面障礙", type: "atk", tier: 3, reqE: 30, mp: 20, dmgType: "magic", reqEle: "earth", status: { kind: "slow", pbase: 150, dur: 30 } },
+        "sk_elf_groundtrap": { n: "地面障礙", type: "atk", tier: 3, reqE: 30, mp: 20, dmgType: "magic", reqEle: "earth", target: "all", status: { kind: "slow", pbase: 150, dur: 30 } },   // 🤝 Phase4：改為全體緩速
         "sk_elf_watervital": { n: "水之元氣", type: "buff", tier: 3, reqE: 30, mp: 1, dur: 64, reqEle: "water", noRefresh: true, waterVital: true, msg: "水之元氣環繞著你。" },   // 🔧 buff 期間內「下次」受到治癒術（玩家自身瞬間治癒，不含持續回復HoT）時恢復量加倍、觸發後7秒冷卻（見 waterVitalHeal）；noRefresh：效果結束才可再施放
 
         // 四階 (Lv 40)
@@ -2195,7 +2216,7 @@ const DB = {
         "sk_illu_avatar":    { n: "幻覺：化身", type: "buff", label: "增益", tier: 4, reqI: 40, mp: 50, dur: 64, d: { extraDmg: 10 }, dmgTakenReduce: 10, msg: "你化身為幻象的存在。" },
         "sk_illu_panic":     { n: "恐慌", type: "atk", tier: 4, reqI: 40, mp: 30, hpCost: 30, dmgType: "magic", ele: "none", status: { kind: "panic", pbase: 100, dur: 64 }, noRecastStatus: "panic", panicMsg: true },
         "sk_illu_insight":   { n: "洞察", type: "buff", label: "增益", tier: 4, reqI: 40, mp: 60, dur: 640, d: { str: 1, dex: 1, con: 1, int: 1, wis: 1 }, msg: "你的感官變得無比敏銳。" },
-        "sk_illu_cube_harmony":{ n: "立方：和諧", type: "buff", label: "增益", tier: 4, reqI: 40, mp: 0, hpCost: 25, dur: 20, cube: { iv: 10, kind: "mp", val: 5 }, msg: "和諧立方在你周身旋轉，引動魔力。" },
+        "sk_illu_cube_harmony":{ n: "立方：和諧", type: "buff", label: "增益", tier: 4, reqI: 40, mp: 0, hpCost: 25, dur: 20, cube: { iv: 10, kind: "dmgmp", dice: [1, 25], ele: "fire", val: 5 }, msg: "和諧立方在你周身旋轉，引動魔力。" },   // 🔮 每秒：對當前目標 1D25 火傷 ＋ 自身回 5 MP
         "sk_illu_pain":      { n: "疼痛的歡愉", type: "buff", label: "增益", tier: 4, reqI: 40, mp: 0, hpCost: 40, dur: 64, painReflect: true, msg: "你迎向疼痛，化痛楚為反擊之力。" },
         // ================= 【龍騎士 龍魔法】（reqDk = 龍騎士需求等級；一階15/二階30/三階45；多數消耗 HP） =================
         // —— 一階龍魔法（Lv15）——
@@ -2330,7 +2351,7 @@ const DB = {
         "zone_39": ["nm_025", "nm_026", "nm_027", "nm_033"],
         "zone_40": ["nm_025", "nm_026", "nm_027", "nm_033"],
         "zone_41": ["nm_025", "nm_026", "nm_027", "nm_033"],
-        // ===== 🏛️ 隱藏狩獵區域出怪池（僅能由對應地圖手動傳送進入；不列於地圖選單、魔物追蹤亦無法指定） =====
+        // ===== 🏛️ 隱藏狩獵區域出怪池（僅能由對應地圖手動傳送進入；不列於地圖選單、魔物追蹤亦無法指定·見 obelMapList 排除） =====
         "hidden_lab_nolife": ["iv_paper", "iv_stone_golem", "iv_iron_golem", "iv_jelly", "iv_armor", "iv_deathsword", "iv_lightball", "iv_mimi"],
         "hidden_lab_darkmagic": ["iv_elder", "iv_blackelder", "iv_chimera", "iv_lamia", "iv_blackmage"],
         "hidden_seal_spirit": ["iv_blackmage", "iv_reaper", "iv_shadow", "iv_spirit", "iv_baless", "iv_karuta", "iv_hatin"],
